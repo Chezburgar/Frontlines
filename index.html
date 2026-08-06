@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#0a0c11" />
+<title>FRONTLINES</title>
+<meta name="description" content="Frontlines — tactical 5v5 close-quarters combat. A Chezburger Pro exclusive." />
+<link rel="preload" as="fetch" href="./models/lunapark.glb" crossorigin />
+<style>
+  :root {
+    --bg:        #07090d;
+    --panel:     #0d1017;
+    --panel-2:   #131722;
+    --line:      #1e2532;
+    --line-2:    #2a3342;
+    --text:      #e6ebf2;
+    --text-dim:  #8b97a8;
+    --text-mute: #5b6675;
+    --accent:    #e8873a;
+    --accent-2:  #ffb457;
+    --accent-dk: #b35f1d;
+    --atk:       #e2603c;
+    --def:       #3f8fd0;
+    --good:      #4fbf7b;
+    --bad:       #e0453c;
+    --font: 'Rajdhani', 'Barlow Condensed', 'Oswald', 'Segoe UI', system-ui, sans-serif;
+    --mono: 'JetBrains Mono', 'SF Mono', ui-monospace, 'Cascadia Mono', monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; overflow: hidden; background: var(--bg); }
+  body {
+    font-family: var(--font);
+    color: var(--text);
+    -webkit-font-smoothing: antialiased;
+    user-select: none;
+    touch-action: none;
+  }
+  canvas#view { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+  #ui { position: fixed; inset: 0; pointer-events: none; }
+  #ui > * { pointer-events: auto; }
+
+  /* ---------------------------------------------------------------- boot */
+  #boot {
+    position: fixed; inset: 0; z-index: 9000;
+    background: var(--bg);
+    display: grid; place-items: center;
+    transition: opacity .5s ease;
+  }
+  #boot.done { opacity: 0; pointer-events: none; }
+  #boot canvas { width: min(92vw, 1100px); height: auto; }
+
+  /* --------------------------------------------------------------- loader */
+  #loader {
+    position: fixed; inset: 0; z-index: 8000;
+    background: radial-gradient(120% 90% at 50% 15%, #131926 0%, var(--bg) 62%);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 26px; opacity: 0; pointer-events: none; transition: opacity .45s ease;
+  }
+  #loader.show { opacity: 1; pointer-events: auto; }
+  #loader .brand { font-size: 54px; font-weight: 700; letter-spacing: .34em; text-indent: .34em; }
+  #loader .brand span { color: var(--accent); }
+  #loader .bar { width: min(520px, 70vw); height: 3px; background: var(--line); overflow: hidden; }
+  #loader .bar i { display: block; height: 100%; width: 0%; background: linear-gradient(90deg, var(--accent-dk), var(--accent-2)); transition: width .25s ease; }
+  #loader .status { font-size: 13px; letter-spacing: .22em; color: var(--text-mute); text-transform: uppercase; }
+  #loader .tip { position: absolute; bottom: 42px; font-size: 14px; color: var(--text-dim); max-width: 620px; text-align: center; line-height: 1.6; }
+  #loader .tip b { color: var(--accent-2); font-weight: 600; }
+
+  #fatal {
+    position: fixed; inset: 0; z-index: 9999; display: none;
+    background: #0a0c11; color: #e6ebf2; padding: 48px;
+    font-family: var(--mono); font-size: 13px; line-height: 1.7; overflow: auto;
+  }
+  #fatal h1 { font-family: var(--font); font-size: 28px; letter-spacing: .2em; color: var(--bad); margin-bottom: 18px; }
+  #fatal pre { white-space: pre-wrap; color: #9aa6b6; }
+</style>
+</head>
+<body>
+  <canvas id="view"></canvas>
+  <div id="ui"></div>
+
+  <div id="loader">
+    <div class="brand">FRONT<span>LINES</span></div>
+    <div class="bar"><i id="loadbar"></i></div>
+    <div class="status" id="loadstatus">Initialising</div>
+    <div class="tip" id="loadtip"></div>
+  </div>
+
+  <div id="boot"><canvas id="bootcanvas" width="1100" height="620"></canvas></div>
+
+  <div id="fatal"><h1>SYSTEM FAULT</h1><pre id="fatalmsg"></pre></div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

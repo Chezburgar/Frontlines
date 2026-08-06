@@ -1,0 +1,29 @@
+{
+  "name": "frontlines",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Frontlines — a tactical 5v5 close-quarters shooter. A Chezburger Pro Exclusive.",
+  "scripts": {
+    "dev": "vite --host",
+    "build": "vite build",
+    "preview": "vite preview",
+    "build:spectator": "vite build --config vite.spectator.config.js",
+    "assets": "node tools/pipeline.mjs",
+    "analyze": "node tools/analyze-map.mjs"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.4",
+    "three": "^0.169.0",
+    "three-mesh-bvh": "^0.8.3"
+  },
+  "devDependencies": {
+    "@gltf-transform/core": "^4.0.9",
+    "@gltf-transform/extensions": "^4.0.9",
+    "@gltf-transform/functions": "^4.0.9",
+    "draco3dgltf": "^1.5.7",
+    "meshoptimizer": "^0.22.0",
+    "sharp": "^0.33.5",
+    "vite": "^5.4.8"
+  }
+}
