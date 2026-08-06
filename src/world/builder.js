@@ -59,6 +59,12 @@ export class SurfacePiece {
 
 export class MapBuilder {
   /**
+   * Geometry problems found during construction. Collected rather than thrown so one bad
+   * opening does not abort the whole map, and surfaced in the console at load.
+   */
+  static issues = [];
+
+  /**
    * @param {MaterialLibrary} lib
    */
   constructor(lib) {
@@ -162,8 +168,34 @@ export class MapBuilder {
     const ang = Math.atan2(dz, dx);
     const ux = dx / len, uz = dz / len;
 
-    // Work in wall-local space (u along the wall, y up), then rotate into world.
-    const sorted = [...openings].sort((a, b) => a.at - b.at);
+    (this._wallSegs ??= []).push({ x1, z1, x2, z2, base, thick });
+
+    // Validate openings before building. An opening that overlaps its neighbour or runs
+    // off the end of the wall still gets a full timber frame drawn around it, which is
+    // what produces the floating/interpenetrating frames seen in-game — the wall segment
+    // that should have surrounded it was never emitted.
+    const sorted = [...openings].sort((a, b) => a.at - b.at).filter((o) => {
+      const w = o.w ?? DIM.doorW;
+      const a0 = o.at - w / 2, a1 = o.at + w / 2;
+      if (a0 < -1e-3 || a1 > len + 1e-3) {
+        MapBuilder.issues.push(
+          `opening ${o.kind ?? 'open'} at ${o.at.toFixed(2)} (w ${w}) exceeds wall ` +
+          `(${x1},${z1})-(${x2},${z2}) of length ${len.toFixed(2)}`);
+        return false;
+      }
+      return true;
+    });
+    for (let i = 1; i < sorted.length; i++) {
+      const prev = sorted[i - 1], cur = sorted[i];
+      const prevEnd = prev.at + (prev.w ?? DIM.doorW) / 2;
+      const curStart = cur.at - (cur.w ?? DIM.doorW) / 2;
+      if (curStart < prevEnd - 1e-3) {
+        MapBuilder.issues.push(
+          `openings overlap on wall (${x1},${z1})-(${x2},${z2}): ` +
+          `${prev.kind ?? 'open'}@${prev.at} ends ${prevEnd.toFixed(2)}, ` +
+          `${cur.kind ?? 'open'}@${cur.at} starts ${curStart.toFixed(2)}`);
+      }
+    }
     const segments = [];
     let cursor = 0;
 
@@ -350,7 +382,47 @@ export class MapBuilder {
    * Merges every static batch into one mesh per material and returns the root.
    * Static geometry is ~1 draw call per surface type; everything interactive stays split.
    */
+  /**
+   * Flags walls that occupy the same space.
+   *
+   * Two near-parallel walls a few centimetres apart are almost always an authoring
+   * mistake — they z-fight, they double up door frames, and they produce a sliver of
+   * unreachable space between them. Cheap to check at ~60 walls and it catches the whole
+   * class rather than the one instance someone happened to screenshot.
+   */
+  _checkWallOverlaps() {
+    const segs = this._wallSegs ?? [];
+    for (let i = 0; i < segs.length; i++) {
+      for (let j = i + 1; j < segs.length; j++) {
+        const a = segs[i], b = segs[j];
+        if (Math.abs(a.base - b.base) > 1.0) continue;          // different storeys
+        const da = { x: a.x2 - a.x1, z: a.z2 - a.z1 };
+        const db = { x: b.x2 - b.x1, z: b.z2 - b.z1 };
+        const la = Math.hypot(da.x, da.z), lb = Math.hypot(db.x, db.z);
+        if (la < 0.5 || lb < 0.5) continue;
+        // Parallel?
+        const cross = Math.abs((da.x * db.z - da.z * db.x) / (la * lb));
+        if (cross > 0.08) continue;
+        // Perpendicular distance between the two lines.
+        const nx = -da.z / la, nz = da.x / la;
+        const gap = Math.abs((b.x1 - a.x1) * nx + (b.z1 - a.z1) * nz);
+        if (gap > 0.62) continue;
+        // Do they actually overlap along their shared axis?
+        const ux = da.x / la, uz = da.z / la;
+        const proj = (x, z) => (x - a.x1) * ux + (z - a.z1) * uz;
+        const b0 = Math.min(proj(b.x1, b.z1), proj(b.x2, b.z2));
+        const b1 = Math.max(proj(b.x1, b.z1), proj(b.x2, b.z2));
+        const overlap = Math.min(la, b1) - Math.max(0, b0);
+        if (overlap < 0.6) continue;
+        MapBuilder.issues.push(
+          `walls overlap: (${a.x1},${a.z1})-(${a.x2},${a.z2}) and ` +
+          `(${b.x1},${b.z1})-(${b.x2},${b.z2}); gap ${gap.toFixed(2)} m over ${overlap.toFixed(1)} m`);
+      }
+    }
+  }
+
   finalise() {
+    this._checkWallOverlaps();
     for (const [matName, geos] of this._batches) {
       if (!geos.length) continue;
       const merged = mergeGeometries(geos);

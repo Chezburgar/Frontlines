@@ -13,6 +13,8 @@ import { playIntro } from './ui/intro.js';
 import { Input } from './core/input.js';
 import { PlayerController } from './game/controller.js';
 import { createOperator, OperatorAnimator } from './game/character.js';
+import { Session } from './game/session.js';
+import './ui/hud.css';
 
 const BASE = import.meta.env.BASE_URL || '/';
 
@@ -74,6 +76,7 @@ class App {
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(w, h);
     this.renderer.resetHistory();
+    this.session?.resize(w / h);
   }
 
   async load() {
@@ -95,11 +98,17 @@ class App {
     const spawn = this.map.spawns.attack[0]?.points[0] ?? { x: 0, y: 0, z: 12 };
     this.player.teleport(spawn.x, spawn.y + 0.1, spawn.z, Math.PI);
 
-    // A third-person body for the local player, used for shadows now and for the
-    // spectator/killcam views later. Remote players will each get one of these.
+    // A third-person body for the local player, kept for the spectator and killcam views.
+    // Hidden in first person: the camera sits at eye height *inside* this mesh, so leaving
+    // it visible fills the lower half of the screen with the inside of your own torso.
     this.bodyRig = createOperator({ team: 'attack' });
     this.bodyAnim = new OperatorAnimator(this.bodyRig);
+    this.bodyRig.group.visible = false;
     this.scene.add(this.bodyRig.group);
+
+    setProgress(0.90, 'Starting match');
+    this.session = new Session(this);
+    this.session.setup({ localName: 'OPERATOR', botCount: 9 });
 
     setProgress(0.94, 'Compiling shaders');
     this.spawnCamera();
@@ -137,12 +146,16 @@ class App {
 
     this.renderer.applyJitter(this.camera);
     this.renderer.render(this.scene, this.camera, dt);
+    // Viewmodel draws last, over the resolved frame, with depth cleared so the weapon
+    // never intersects world geometry.
+    this.session?.render(this.renderer.renderer);
   }
 
   update(dt) {
     if (!this.player) return;
     const cmd = this.input.poll(this.player.ads);
     this.player.update(dt, cmd);
+    this.session?.update(dt, cmd);
 
     // Drive the third-person body from the controller's state. It is offset behind the
     // camera's eye so the local player never sees the inside of their own head.
@@ -234,6 +247,7 @@ class App {
       this.renderer.markShadowsDirty();
       this.renderer.applyJitter(this.camera);
       this.renderer.render(this.scene, this.camera, 1 / 60);
+      this.session?.render(this.renderer.renderer);
     }
 
     const blob = await new Promise((r) => el.canvas.toBlob(r, 'image/png'));

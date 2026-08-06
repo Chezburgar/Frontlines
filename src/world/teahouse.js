@@ -64,6 +64,7 @@ const OBJECTIVES = [
 
 /** Returns the populated MapBuilder — callers read `.root` plus the room/spawn tables. */
 export function buildTeahouse(lib) {
+  MapBuilder.issues = [];
   const b = new MapBuilder(lib);
   b.rooms = ROOMS.map((r) => ({ ...r, y: r.floor === 0 ? F0 : F1 }));
   b.objectives = OBJECTIVES;
@@ -77,6 +78,11 @@ export function buildTeahouse(lib) {
   spawns(b);
 
   b.finalise();
+  if (MapBuilder.issues.length) {
+    console.warn(`[teahouse] ${MapBuilder.issues.length} geometry issue(s):`);
+    for (const m of MapBuilder.issues) console.warn('  ' + m);
+  }
+  b.issues = MapBuilder.issues.slice();
   return b;
 }
 
@@ -192,10 +198,12 @@ function groundFloor(b) {
   shojiRun(RING.x1, RING.z0, B.x1, RING.z0, 3);
   shojiRun(B.x0, RING.z1, RING.x0, RING.z1, 3);
   shojiRun(RING.x1, RING.z1, B.x1, RING.z1, 3);
-  shojiRun(RING.x0, B.z0, RING.x0, RING.z0, 2);
-  shojiRun(RING.x1, B.z0, RING.x1, RING.z0, 2);
-  shojiRun(RING.x0, RING.z1, RING.x0, B.z1, 2);
-  shojiRun(RING.x1, RING.z1, RING.x1, B.z1, 2);
+  // The ring's west and east faces. These only exist alongside the ring itself
+  // (z = RING.z0..RING.z1) — previously they were run from the building edge to the ring,
+  // which put a spurious wall at x = +-9.5 straight through the north and south bands,
+  // half a metre from the real partitions and interpenetrating their door frames.
+  shojiRun(RING.x0, RING.z0, RING.x0, RING.z1, 4);
+  shojiRun(RING.x1, RING.z0, RING.x1, RING.z1, 4);
 
   // Ring inner face onto the courtyard: open bays between posts, with murder holes in the
   // low spandrels so defenders can hold the yard from cover.
@@ -287,10 +295,12 @@ function firstFloor(b) {
   shojiRun(RING.x1, RING.z0, B.x1, RING.z0, 3);
   shojiRun(B.x0, RING.z1, RING.x0, RING.z1, 3);
   shojiRun(RING.x1, RING.z1, B.x1, RING.z1, 3);
-  shojiRun(RING.x0, B.z0, RING.x0, RING.z0, 2);
-  shojiRun(RING.x1, B.z0, RING.x1, RING.z0, 2);
-  shojiRun(RING.x0, RING.z1, RING.x0, B.z1, 2);
-  shojiRun(RING.x1, RING.z1, RING.x1, B.z1, 2);
+  // The ring's west and east faces. These only exist alongside the ring itself
+  // (z = RING.z0..RING.z1) — previously they were run from the building edge to the ring,
+  // which put a spurious wall at x = +-9.5 straight through the north and south bands,
+  // half a metre from the real partitions and interpenetrating their door frames.
+  shojiRun(RING.x0, RING.z0, RING.x0, RING.z1, 4);
+  shojiRun(RING.x1, RING.z0, RING.x1, RING.z1, 4);
 
   // Gallery balustrade overlooking the courtyard, with murder holes for prone angles.
   const rails = [
