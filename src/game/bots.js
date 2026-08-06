@@ -178,7 +178,7 @@ export class BotBrain {
         this.s.match.applyDamage(h.target, h.damage, this.p, h.zone);
       }
     }
-    this.s.flashAt?.(from, dir);
+    this.s.flashAt?.(from, dir, this.weapon.def);
   }
 
   /* ---------------------------------------------------------------- movement */

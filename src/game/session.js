@@ -14,6 +14,9 @@ import { createOperator, OperatorAnimator } from './character.js';
 import { HUD } from '../ui/hud.js';
 import { STANCE } from './controller.js';
 import { BotBrain } from './bots.js';
+import { audio } from '../core/audio.js';
+import { surfaceOf } from '../world/materials.js';
+import { applySkin } from '../ui/banner.js';
 
 const DEFAULT_LOADOUT = {
   primary: { id: 'ar556', attach: { sight: 'holo', barrel: 'compensator', grip: 'vertical', under: 'none' } },
@@ -48,9 +51,10 @@ export class Session {
   /* ------------------------------------------------------------------ setup */
 
   /** Registers the local player and a set of bots so the loop is exercisable solo. */
-  setup({ localName = 'OPERATOR', botCount = 9 } = {}) {
+  setup({ localName = 'OPERATOR', botCount = 9, loadout = null, skins = {}, banner = null } = {}) {
+    this.skins = skins;
     const local = this.addPlayer({
-      id: 'local', name: localName, team: 0, slot: 0, local: true,
+      id: 'local', name: localName, team: 0, slot: 0, local: true, banner,
       controller: this.app.player,
     });
     this.local = local;
@@ -66,7 +70,7 @@ export class Session {
       this.bots.push(new BotBrain(this, p));
     }
 
-    this.equip(local, DEFAULT_LOADOUT);
+    this.equip(local, loadout ?? DEFAULT_LOADOUT);
     this.match.startMatch();
     return this;
   }
@@ -97,10 +101,21 @@ export class Session {
       new WeaponInstance(loadout.secondary.id, loadout.secondary.attach),
     ];
     player.slot = 0;
-    if (player.local) this.viewmodel.setWeapon(player.weapons[0].def);
+    if (player.local) {
+      const built = this.viewmodel.setWeapon(player.weapons[0].def);
+      applySkin(built.materials, this.skins?.[loadout.primary.id] ?? 'default');
+    }
   }
 
   get weapon() { return this.local?.weapons?.[this.local.slot]; }
+
+  /** Rebuilds the viewmodel for the currently held weapon, with its skin applied. */
+  _equipViewmodel() {
+    const w = this.weapon;
+    if (!w) return;
+    const built = this.viewmodel.setWeapon(w.def);
+    applySkin(built.materials, this.skins?.[w.def.id] ?? 'default');
+  }
 
   /* ------------------------------------------------------------------- tick */
 
@@ -136,6 +151,10 @@ export class Session {
 
     for (const b of this.bots ?? []) b.update(dt);
 
+    audio.updateListener(this.app.camera);
+    this.updateFootsteps(dt);
+    this.updateBombAudio(dt);
+
     this.particles.update(dt);
     this.hitFeedback.t = Math.max(0, this.hitFeedback.t - dt);
 
@@ -156,16 +175,18 @@ export class Session {
     if (cmd.weaponSlot >= 0 && cmd.weaponSlot < this.local.weapons.length && cmd.weaponSlot !== this.local.slot) {
       this.local.slot = cmd.weaponSlot;
       w.cancelReload();
-      this.viewmodel.setWeapon(this.weapon.def);
+      this._equipViewmodel();
       return;
     }
     if (cmd.cycleWeapon) {
       this.local.slot = (this.local.slot + (cmd.cycleWeapon > 0 ? 1 : -1) + this.local.weapons.length) % this.local.weapons.length;
       w.cancelReload();
-      this.viewmodel.setWeapon(this.weapon.def);
+      this._equipViewmodel();
       return;
     }
-    if (cmd.reload) w.startReload();
+    if (cmd.reload && w.startReload()) {
+      audio.reload({ empty: w.empty, shell: !!w.def.shellByShell });
+    }
     // Firing interrupts a shell-by-shell reload, which is what makes the shotgun a
     // real commitment rather than a free top-up.
     if ((cmd.fire || cmd.firePressed) && w.reloading > 0 && w.def.shellByShell && w.ammo > 0) w.cancelReload();
@@ -205,6 +226,9 @@ export class Session {
           this.particles.emit(h.point, 5, {
             color: h.surface.debris, speed: 2.6, life: 0.5, size: 0.022,
           });
+          // Only the first pellet of a shotgun blast gets an impact sound; nine of them
+          // firing at once is mud, not detail.
+          if (i === 0) audio.impact({ position: h.point, surface: h.surfaceName });
           const piece = h.piece;
           if (piece) {
             const power = (w.def.breachPower ?? 1) * 34;
@@ -221,6 +245,11 @@ export class Session {
     }
 
     if (anyHit) this.hitFeedback = { t: 0.22, kill: anyKill, head: anyHead };
+
+    audio.gunshot({
+      weapon: w.def, firstPerson: true,
+      suppressed: w.def.attach?.barrel === 'suppressor',
+    });
 
     // Recoil: the view kicks, the model kicks harder and recovers faster.
     const [rv, rh] = w.recoil();
@@ -246,10 +275,65 @@ export class Session {
     this.particles.emit(at, 3, { color: 0xffbb66, speed: 5, life: 0.09, size: 0.05 });
   }
 
+  /**
+   * Footsteps for the local player and every bot.
+   *
+   * Driven by distance travelled rather than a timer, so stride length stays constant and
+   * a walking player is genuinely quieter than a sprinting one — which is the whole
+   * information economy of the genre.
+   */
+  updateFootsteps(dt) {
+    const stride = 2.05;
+    const step = (entity, pos, speed, running) => {
+      if (speed < 0.35) { entity._stepDist = 0; return; }
+      entity._stepDist = (entity._stepDist ?? 0) + speed * dt;
+      if (entity._stepDist < stride * (running ? 0.78 : 1)) return;
+      entity._stepDist = 0;
+      // Sample the floor under the foot to pick the surface.
+      const down = this.map.raycast(
+        new THREE.Vector3(pos.x, pos.y + 0.6, pos.z), DOWN_V, 1.6);
+      const surf = down ? surfaceOf(down.surfaceName).footstep : 'stone';
+      const isLocal = entity === this.local;
+      audio.footstep({
+        position: isLocal ? null : pos,
+        surface: surf,
+        running,
+        occlusion: isLocal ? 0 : audio.occlusionTo(this.map, pos),
+        gain: isLocal ? 0.4 : 1,
+      });
+    };
+
+    const ctrl = this.app.player;
+    if (ctrl.grounded) {
+      step(this.local, ctrl.position, ctrl.speed, ctrl.sprinting);
+    }
+    for (const b of this.bots ?? []) {
+      if (b.p.alive) step(b.p, b.p.position, b.p.speed ?? 0, (b.p.speed ?? 0) > 2.2);
+    }
+  }
+
+  /** Once the charge is live it beeps, faster as the fuse runs down. */
+  updateBombAudio(dt) {
+    const m = this.match;
+    if (m.phase !== 'planted' || !m.bomb.position) { this._beepIn = 0; return; }
+    const frac = 1 - m.timeLeft / m.rules.fuseSeconds;
+    const interval = 1.15 - frac * 0.85;
+    this._beepIn = (this._beepIn ?? 0) - dt;
+    if (this._beepIn <= 0) {
+      this._beepIn = interval;
+      audio.bombBeep({ position: m.bomb.position, urgency: frac });
+    }
+  }
+
   /** Muzzle flash for a shot fired somewhere other than the local camera (bots). */
-  flashAt(pos, dir) {
+  flashAt(pos, dir, weaponDef) {
     this.particles.emit(pos.clone().addScaledVector(dir, 0.4), 3,
       { color: 0xffbb66, speed: 4, life: 0.08, size: 0.045 });
+    audio.gunshot({
+      position: pos, weapon: weaponDef,
+      occlusion: audio.occlusionTo(this.map, pos),
+      suppressed: weaponDef?.attach?.barrel === 'suppressor',
+    });
   }
 
   handleInteract(dt, cmd) {
@@ -357,3 +441,4 @@ export class Session {
 }
 
 const UP = new THREE.Vector3(0, 1, 0);
+const DOWN_V = new THREE.Vector3(0, -1, 0);

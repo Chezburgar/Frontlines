@@ -46,10 +46,16 @@ export function playIntro(canvas, opts = {}) {
   let done = false;
   let raf = 0;
 
+  // requestAnimationFrame is throttled to a stop in a backgrounded or non-compositing
+  // tab. Without a wall-clock fallback the card never completes and boot stalls on it
+  // forever, so the timer — not the animation — owns when the intro ends.
+  const failsafe = setTimeout(() => finish(), DURATION + 400);
+
   function finish() {
     if (done) return;
     done = true;
     cancelAnimationFrame(raf);
+    clearTimeout(failsafe);
     window.removeEventListener('keydown', onSkip);
     window.removeEventListener('pointerdown', onSkip);
     opts.onDone?.();

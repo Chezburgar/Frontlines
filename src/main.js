@@ -14,7 +14,9 @@ import { Input } from './core/input.js';
 import { PlayerController } from './game/controller.js';
 import { createOperator, OperatorAnimator } from './game/character.js';
 import { Session } from './game/session.js';
+import { Shell } from './ui/shell.js';
 import './ui/hud.css';
+import './ui/shell.css';
 
 const BASE = import.meta.env.BASE_URL || '/';
 
@@ -106,10 +108,6 @@ class App {
     this.bodyRig.group.visible = false;
     this.scene.add(this.bodyRig.group);
 
-    setProgress(0.90, 'Starting match');
-    this.session = new Session(this);
-    this.session.setup({ localName: 'OPERATOR', botCount: 9 });
-
     setProgress(0.94, 'Compiling shaders');
     this.spawnCamera();
     this.lighting.sun.update(this.camera);
@@ -151,11 +149,35 @@ class App {
     this.session?.render(this.renderer.renderer);
   }
 
+  /** Starts a match from the shell. */
+  beginMatch({ offline = true, profile, lobby, isHost, user } = {}) {
+    this.session = new Session(this);
+    const loadout = profile?.loadouts?.default;
+    this.session.setup({
+      localName: profile?.username ?? 'OPERATOR',
+      botCount: 9,
+      loadout,
+      skins: profile?.skins ?? {},
+      banner: profile?.banner,
+    });
+    this.session.net = { offline, lobby, isHost, user };
+    this.renderer.resetHistory();
+    return this.session;
+  }
+
   update(dt) {
-    if (!this.player) return;
+    // Slow orbit behind the menu.
+    if (this.menuOrbit) {
+      this._orbit = (this._orbit ?? 0) + dt * 0.045;
+      const r = 30;
+      this.camera.position.set(Math.sin(this._orbit) * r, 11 + Math.sin(this._orbit * 0.6) * 2.5, Math.cos(this._orbit) * r);
+      this.camera.lookAt(0, 3.5, 0);
+      return;
+    }
+    if (!this.player || !this.session) return;
     const cmd = this.input.poll(this.player.ads);
     this.player.update(dt, cmd);
-    this.session?.update(dt, cmd);
+    this.session.update(dt, cmd);
 
     // Drive the third-person body from the controller's state. It is offset behind the
     // camera's eye so the local player never sees the inside of their own head.
@@ -293,18 +315,42 @@ async function boot() {
 
   app.start();
 
+  const { audio } = await import('./core/audio.js');
+
+  // The menu runs over a slow orbit of the map, so the shell is never a flat background.
+  app.camera.position.set(0, 8.5, 26);
+  app.camera.lookAt(0, 3, 0);
+  app.menuOrbit = true;
+
   // Pointer lock has to originate from a user gesture, so prompt rather than grab it.
   const prompt = document.createElement('div');
   prompt.id = 'clickprompt';
+  prompt.style.display = 'none';
   prompt.innerHTML = '<b>CLICK TO DEPLOY</b><span>WASD move &middot; Shift sprint &middot; Ctrl crouch &middot; Q/E lean &middot; Esc release</span>';
   el.ui.appendChild(prompt);
-  const grab = () => app.input.requestLock();
+  const grab = async () => {
+    // Browsers only allow an AudioContext to start from a user gesture, so this is the
+    // first opportunity to bring sound up.
+    await audio.init();
+    audio.startAmbience();
+    app.input.requestLock();
+  };
   prompt.addEventListener('click', grab);
-  el.canvas.addEventListener('click', grab);
-  app.input.onUnlock = () => { prompt.style.display = ''; };
+  el.canvas.addEventListener('click', () => { if (app.session) grab(); });
   document.addEventListener('pointerlockchange', () => {
-    prompt.style.display = app.input.locked ? 'none' : '';
+    if (app.session) prompt.style.display = app.input.locked ? 'none' : '';
   });
+
+  const shell = new Shell(el.ui, app);
+  app.shell = shell;
+  shell.onStartMatch = async (opts) => {
+    await audio.init();
+    audio.startAmbience();
+    app.menuOrbit = false;
+    app.beginMatch(opts);
+    prompt.style.display = '';
+  };
+  await shell.start();
 }
 
 boot().catch(fatal);
