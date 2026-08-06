@@ -239,6 +239,14 @@ class App {
     }
     if (fov) { this.camera.fov = fov; this.camera.updateProjectionMatrix(); }
 
+    // The viewmodel only takes up its carry pose inside its own update(); without this it
+    // sits at the viewmodel camera's origin and fills the frame.
+    for (let i = 0; i < 12; i++) {
+      this.session?.viewmodel.update(1 / 60, {
+        ads: this.player?.ads ?? 0, speed: 0, grounded: true, lookDX: 0, lookDY: 0,
+      });
+    }
+
     // TAA needs a few frames to converge before the shot is representative.
     this.renderer.resetHistory();
     for (let i = 0; i < 8; i++) {

@@ -13,6 +13,7 @@ import { ViewModel } from './viewmodel.js';
 import { createOperator, OperatorAnimator } from './character.js';
 import { HUD } from '../ui/hud.js';
 import { STANCE } from './controller.js';
+import { BotBrain } from './bots.js';
 
 const DEFAULT_LOADOUT = {
   primary: { id: 'ar556', attach: { sight: 'holo', barrel: 'compensator', grip: 'vertical', under: 'none' } },
@@ -54,12 +55,15 @@ export class Session {
     });
     this.local = local;
 
+    this.bots = [];
     for (let i = 0; i < botCount; i++) {
       const team = i < 4 ? 0 : 1;
-      this.addPlayer({
+      const p = this.addPlayer({
         id: `bot${i}`, name: `BOT-${String(i + 1).padStart(2, '0')}`,
         team, slot: (i % 5) + (team === 0 ? 1 : 0), bot: true,
+        yaw: 0, pitch: 0, speed: 0,
       });
+      this.bots.push(new BotBrain(this, p));
     }
 
     this.equip(local, DEFAULT_LOADOUT);
@@ -129,6 +133,8 @@ export class Session {
       lean: ctrl.lean,
       reloadProgress: w && w.reloading > 0 ? 1 - w.reloading / Math.max(0.001, w.reloadTotal) : 0,
     });
+
+    for (const b of this.bots ?? []) b.update(dt);
 
     this.particles.update(dt);
     this.hitFeedback.t = Math.max(0, this.hitFeedback.t - dt);
@@ -238,6 +244,12 @@ export class Session {
     clearTimeout(this._flashT);
     this._flashT = setTimeout(() => { if (this._flashLight) this._flashLight.intensity = 0; }, 34);
     this.particles.emit(at, 3, { color: 0xffbb66, speed: 5, life: 0.09, size: 0.05 });
+  }
+
+  /** Muzzle flash for a shot fired somewhere other than the local camera (bots). */
+  flashAt(pos, dir) {
+    this.particles.emit(pos.clone().addScaledVector(dir, 0.4), 3,
+      { color: 0xffbb66, speed: 4, life: 0.08, size: 0.045 });
   }
 
   handleInteract(dt, cmd) {

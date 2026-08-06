@@ -111,7 +111,13 @@ export class Match {
     const spawns = side === TEAM.ATTACK ? this.world.map.spawns.attack : this.world.map.spawns.defend;
     const group = spawns[(p.slot ?? 0) % spawns.length];
     const pt = group?.points[(p.slot ?? 0) % group.points.length];
-    if (pt && p.controller) p.controller.teleport(pt.x, pt.y + 0.1, pt.z, Math.atan2(-pt.x, -pt.z));
+    if (pt) {
+      const yaw = Math.atan2(-pt.x, -pt.z);
+      // Bots have no controller, so their transform has to be written directly — without
+      // this every bot stays at the world origin and they all render inside each other.
+      if (p.controller) p.controller.teleport(pt.x, pt.y + 0.1, pt.z, yaw);
+      else { p.position.set(pt.x, pt.y, pt.z); p.yaw = yaw; p.speed = 0; }
+    }
     p.spawnRoom = group?.name ?? '';
   }
 

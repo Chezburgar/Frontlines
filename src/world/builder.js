@@ -214,7 +214,7 @@ export class MapBuilder {
       if (head < height - 0.01) segments.push({ u0: start, u1: start + w, y0: head, y1: height, spandrel: true });
       cursor = start + w;
       if (o.kind !== 'open') {
-        this._openingTrim(x1, z1, ux, uz, ang, o.at, w, sill, head, thick, trim, o);
+        this._openingTrim(x1, z1, ux, uz, ang, o.at, w, sill, head, thick, trim, o, base);
       }
     }
     if (cursor < len - 0.01) segments.push({ u0: cursor, u1: len, y0: 0, y1: height });
@@ -249,17 +249,34 @@ export class MapBuilder {
   }
 
   /** Frames an opening with timber, which is what sells a doorway as built rather than cut. */
-  _openingTrim(x1, z1, ux, uz, ang, at, w, sill, head, thick, enabled, o) {
+  _openingTrim(x1, z1, ux, uz, ang, at, w, sill, head, thick, enabled, o, base = 0) {
     if (!enabled) return;
     const t = 0.07;
     const frameMat = 'woodBeam';
     const cx = x1 + ux * at, cz = z1 + uz * at;
 
+    // Record the frame volume so overlapping frames can be detected regardless of the
+    // orientation of the walls they belong to — the parallel-wall check misses two
+    // openings colliding at a corner or across perpendicular walls.
+    const halfW = w / 2 + t;
+    const ax = Math.abs(ux) * halfW + Math.abs(uz) * (thick / 2 + 0.05);
+    const az = Math.abs(uz) * halfW + Math.abs(ux) * (thick / 2 + 0.05);
+    (this._openingBoxes ??= []).push({
+      kind: o.kind ?? 'open',
+      minX: cx - ax, maxX: cx + ax,
+      minZ: cz - az, maxZ: cz + az,
+      minY: base + sill - t, maxY: base + head + t,
+      cx, cz, at,
+    });
+
+    // `sill` and `head` are heights above the wall's own base, so every Y here has to be
+    // offset by it. Without that, first-storey window frames were all drawn down at
+    // ground-floor height, floating over the openings below them.
     const addLocal = (du, dy, sw, sh, sd) => {
       const geo = new THREE.BoxGeometry(sw, sh, sd);
       this._scaleBoxUVs(geo, sw, sh, sd, 1.4);
       geo.rotateY(-ang);
-      geo.translate(cx + ux * du, dy, cz + uz * du);
+      geo.translate(cx + ux * du, base + dy, cz + uz * du);
       this._push(frameMat, geo);
     };
     // jambs
@@ -275,7 +292,7 @@ export class MapBuilder {
       const geo = new THREE.BoxGeometry(w, head - sill, 0.03);
       this._scaleBoxUVs(geo, w, head - sill, 0.03, 0.5);
       geo.rotateY(-ang);
-      geo.translate(cx, (sill + head) / 2, cz);
+      geo.translate(cx, base + (sill + head) / 2, cz);
       const mesh = new THREE.Mesh(geo, this.lib.cloneFor(o.screen));
       mesh.castShadow = false; mesh.receiveShadow = true;
       this.dynamicGroup.add(mesh);
@@ -289,7 +306,8 @@ export class MapBuilder {
     if (o.barricadeable) {
       this.barricades = this.barricades || [];
       this.barricades.push({
-        id: nextId(), x: cx, z: cz, angle: ang, width: w, sill, head,
+        id: nextId(), x: cx, z: cz, angle: ang, width: w,
+        sill: base + sill, head: base + head, base,
         kind: o.kind, planks: [], intact: false,
       });
     }
@@ -421,8 +439,35 @@ export class MapBuilder {
     }
   }
 
+  /**
+   * Flags opening frames whose volumes intersect.
+   *
+   * This catches what the parallel-wall check cannot: a window on one wall colliding with
+   * a door on a perpendicular wall, or two openings from different walls meeting at a
+   * corner. It tests the symptom the player actually sees — two timber frames occupying
+   * the same space — rather than inferring it from wall placement.
+   */
+  _checkOpeningOverlaps() {
+    const boxes = this._openingBoxes ?? [];
+    for (let i = 0; i < boxes.length; i++) {
+      for (let j = i + 1; j < boxes.length; j++) {
+        const a = boxes[i], b = boxes[j];
+        const ox = Math.min(a.maxX, b.maxX) - Math.max(a.minX, b.minX);
+        const oy = Math.min(a.maxY, b.maxY) - Math.max(a.minY, b.minY);
+        const oz = Math.min(a.maxZ, b.maxZ) - Math.max(a.minZ, b.minZ);
+        if (ox > 0.02 && oy > 0.02 && oz > 0.02) {
+          MapBuilder.issues.push(
+            `opening frames intersect: ${a.kind} at (${a.cx.toFixed(2)}, ${a.cz.toFixed(2)}) ` +
+            `and ${b.kind} at (${b.cx.toFixed(2)}, ${b.cz.toFixed(2)}) ` +
+            `- overlap ${ox.toFixed(2)} x ${oy.toFixed(2)} x ${oz.toFixed(2)} m`);
+        }
+      }
+    }
+  }
+
   finalise() {
     this._checkWallOverlaps();
+    this._checkOpeningOverlaps();
     for (const [matName, geos] of this._batches) {
       if (!geos.length) continue;
       const merged = mergeGeometries(geos);
