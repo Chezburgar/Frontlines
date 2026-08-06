@@ -76,20 +76,14 @@ class App {
   async load() {
     setProgress(0.02, 'Connecting');
 
-    setProgress(0.05, 'Streaming Luna Park');
-    await this.map.load(
-      `${BASE}models/lunapark.glb`,
-      `${BASE}models/lunapark.nav.json`,
-      (p) => setProgress(0.05 + p * 0.65, 'Streaming Luna Park'),
-    );
+    await this.map.build((p, label) => setProgress(0.02 + p * 0.72, label));
     this.scene.add(this.map.root);
-    console.info(`[map] ${this.map.chunks.length} chunks, ` +
-      `${this.map.triangleCount.toLocaleString()} tris, ` +
-      `${this.map.vertexCount.toLocaleString()} verts`);
+    console.info(`[map] ${this.map.triangleCount.toLocaleString()} collision tris, ` +
+      `${this.map.pieces.length} destructible pieces, ${this.map.rooms.length} rooms`);
 
-    setProgress(0.76, 'Building light rig');
+    setProgress(0.78, 'Building light rig');
     this.lighting = buildLighting(this.scene, this.renderer.renderer, 'afternoon', QUALITY[this.quality]);
-    const lampCount = this.lighting.interior.buildFromNav(this.map.nav);
+    const lampCount = this.lighting.interior.buildFromPoints(this.map.lights);
     console.info(`[lighting] ${lampCount} interior sources`);
 
     setProgress(0.9, 'Compiling shaders');
@@ -102,24 +96,10 @@ class App {
     setProgress(1.0, 'Ready');
   }
 
-  /** Drops the camera into the largest analysed room on the ground storey. */
+  /** Drops the camera on the courtyard's south edge looking across it. */
   spawnCamera() {
-    const nav = this.map.nav;
-    let best = null;
-    if (nav?.storeys?.length) {
-      for (const s of nav.storeys) {
-        for (const r of s.rooms) {
-          if (!best || r.area > best.area) best = { ...r, y: s.y };
-        }
-      }
-    }
-    if (best) {
-      this.camera.position.set(best.centre.x, best.y + 1.65, best.centre.z);
-    } else {
-      const c = this.map.bounds.getCenter(new THREE.Vector3());
-      this.camera.position.set(c.x, this.map.bounds.min.y + 1.65, c.z);
-    }
-    this.camera.lookAt(0, this.camera.position.y, 0);
+    this.camera.position.set(0, 1.65, 8.5);
+    this.camera.rotation.set(0, 0, 0, 'YXZ');
   }
 
   start() {
@@ -138,10 +118,8 @@ class App {
     const dt = Math.min(0.1, this.clock.getDelta());
     this.update(dt);
 
-    this.map.updateCulling(this.camera);
     this.lighting.sun.update(this.camera);
     this.lighting.interior.update(this.camera.position);
-    this.map.updateShadowCasters(this.camera.position, QUALITY[this.quality].shadowDistance);
     this.renderer.markShadowsDirty();
 
     this.renderer.applyJitter(this.camera);
@@ -201,8 +179,15 @@ class App {
    * read has to happen in the same task as the draw — hence the explicit render here
    * rather than relying on the animation loop's last frame.
    */
-  async capture(name = 'shot.png', { x, y, z, yaw, pitch, fov } = {}) {
+  async capture(name = 'shot.png', { x, y, z, yaw, pitch, fov, target } = {}) {
     if (x !== undefined) this.camera.position.set(x, y, z);
+    if (target) {
+      // Derive yaw/pitch from a look-at target so shots can be aimed at a place rather
+      // than by hand-solving angles (and getting the sign wrong).
+      const d = new THREE.Vector3(target[0], target[1], target[2]).sub(this.camera.position);
+      yaw = Math.atan2(-d.x, -d.z);
+      pitch = Math.atan2(d.y, Math.hypot(d.x, d.z));
+    }
     if (yaw !== undefined) {
       this.camera.rotation.set(0, 0, 0, 'YXZ');
       this.camera.rotateY(yaw);
@@ -214,7 +199,6 @@ class App {
     // TAA needs a few frames to converge before the shot is representative.
     this.renderer.resetHistory();
     for (let i = 0; i < 8; i++) {
-      this.map.updateCulling(this.camera);
       this.lighting.sun.update(this.camera);
       this.lighting.interior.update(this.camera.position);
       this.renderer.markShadowsDirty();

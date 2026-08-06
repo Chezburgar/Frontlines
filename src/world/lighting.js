@@ -123,7 +123,10 @@ export class Sky {
         uSunDir: { value: sunDir.clone() },
         uTurbidity: { value: 3.4 },
         uRayleigh: { value: 1.8 },
-        uGroundColor: { value: new THREE.Color(0x2a2b2c) },
+        // The lower hemisphere is what lights every downward-facing surface through the
+        // IBL. Left near-black, every ceiling and soffit in the building renders black —
+        // this stands in for bounce off the pale gravel grounds.
+        uGroundColor: { value: new THREE.Color(0x6b6153) },
         // Extraterrestrial irradiance, matching the Preetham reference scale.
         uSunIntensity: { value: 1000.0 },
         // The reference model's output lands roughly in display range; lift it into linear
@@ -294,36 +297,18 @@ export class InteriorLights {
     scene.add(this.fixtures);
   }
 
-  /** Builds the source list from analysed rooms. */
-  buildFromNav(nav) {
-    if (!nav?.storeys) return;
-    const geo = new THREE.SphereGeometry(0.075, 10, 8);
-    const mat = new THREE.MeshBasicMaterial({ color: 0xffd9a8, toneMapped: false });
-    for (const storey of nav.storeys) {
-      for (const room of storey.rooms) {
-        if (room.area < 10) continue;
-        // Bigger rooms get more, spread around the centroid.
-        const n = room.area > 120 ? 3 : room.area > 45 ? 2 : 1;
-        for (let i = 0; i < n; i++) {
-          const a = (i / n) * Math.PI * 2;
-          const spread = n > 1 ? Math.min(4.5, Math.sqrt(room.area) * 0.32) : 0;
-          const p = new THREE.Vector3(
-            room.centre.x + Math.cos(a) * spread,
-            storey.y + 2.45,
-            room.centre.z + Math.sin(a) * spread,
-          );
-          const warmth = 0.82 + ((room.id * 37 + i * 11) % 100) / 480;
-          this.sources.push({
-            pos: p,
-            color: new THREE.Color().setHSL(0.085, 0.62, 0.5).multiplyScalar(warmth),
-            intensity: room.area > 120 ? 5.2 : 3.6,
-            distance: Math.min(16, 5 + Math.sqrt(room.area) * 0.9),
-          });
-          const bulb = new THREE.Mesh(geo, mat);
-          bulb.position.copy(p);
-          this.fixtures.add(bulb);
-        }
-      }
+  /**
+   * Builds the source list from explicit fixture positions emitted by the map builder
+   * (paper lanterns overhead, stone lanterns in the courtyard).
+   */
+  buildFromPoints(points = []) {
+    for (const p of points) {
+      this.sources.push({
+        pos: new THREE.Vector3(p.x, p.y, p.z),
+        color: new THREE.Color(p.color ?? 0xffb877),
+        intensity: p.intensity ?? 3.0,
+        distance: p.distance ?? 9,
+      });
     }
     return this.sources.length;
   }
@@ -359,10 +344,13 @@ export class InteriorLights {
 
 export const TIME_PRESETS = {
   afternoon: {
-    sun: new THREE.Vector3(0.38, 0.46, -0.80),
-    sunColor: 0xfff0d8, sunIntensity: 2.9,
-    hemiSky: 0x93b6dd, hemiGround: 0x3a3630, hemiIntensity: 0.55,
-    turbidity: 3.2, rayleigh: 1.7, fog: 0x9fb2c4, fogDensity: 0.0042,
+    // Sun sits high on purpose. A low afternoon angle looks better in isolation but the
+    // hipped roof then shades the entire courtyard, and the courtyard is the map's
+    // centrepiece — it has to read as an outdoor space from inside the ring.
+    sun: new THREE.Vector3(0.25, 0.92, -0.30),
+    sunColor: 0xfff0d8, sunIntensity: 3.4,
+    hemiSky: 0x93b6dd, hemiGround: 0x776c5c, hemiIntensity: 1.1,
+    turbidity: 3.2, rayleigh: 1.7, fog: 0x9fb2c4, fogDensity: 0.0030,
     exposure: 1.0,
   },
   dusk: {
@@ -394,7 +382,9 @@ export function buildLighting(scene, renderer, preset = 'afternoon', quality) {
   scene.environment = sky.generateEnvironment(renderer);
   // Ambient has to stay well under the sun or every surface reads as flat cardboard —
   // the shape in this scene comes from the key light and the AO, not the IBL.
-  scene.environmentIntensity = preset === 'night' ? 0.22 : 0.5;
+  // Most of Teahouse is roofed, so ambient does more work here than it would outdoors:
+  // it is the only thing lighting the rooms the sun never reaches.
+  scene.environmentIntensity = preset === 'night' ? 0.3 : 1.15;
 
   scene.fog = new THREE.FogExp2(p.fog, p.fogDensity);
 
@@ -426,7 +416,7 @@ export function buildLighting(scene, renderer, preset = 'afternoon', quality) {
   sun.lights.forEach((l) => l.color.setHex(p.sunColor));
   sun.setIntensity(p.sunIntensity / sun.cascadeCount * 1.6);
 
-  const interior = new InteriorLights(scene, { budget: quality.cascades >= 3 ? 8 : 5 });
+  const interior = new InteriorLights(scene, { budget: quality.cascades >= 3 ? 12 : 6 });
 
   return { sky, sun, hemi, interior, preset: p };
 }
