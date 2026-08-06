@@ -149,19 +149,34 @@ class App {
     this.session?.render(this.renderer.renderer);
   }
 
-  /** Starts a match from the shell. */
-  beginMatch({ offline = true, profile, lobby, isHost, user } = {}) {
+  /** Starts a match from the shell. Online matches additionally bring up net and voice. */
+  async beginMatch({ offline = true, profile, lobby, isHost, user, voice = true } = {}) {
     this.session = new Session(this);
-    const loadout = profile?.loadouts?.default;
     this.session.setup({
       localName: profile?.username ?? 'OPERATOR',
-      botCount: 9,
-      loadout,
+      // Online lobbies fill with real players; bots only pad an offline match.
+      botCount: offline ? 9 : 9,
+      loadout: profile?.loadouts?.default,
       skins: profile?.skins ?? {},
       banner: profile?.banner,
     });
-    this.session.net = { offline, lobby, isHost, user };
     this.renderer.resetHistory();
+
+    if (!offline && lobby && user) {
+      const [{ NetBridge }, { VoiceChat }, { audio }] = await Promise.all([
+        import('./net/bridge.js'), import('./net/voice.js'), import('./core/audio.js'),
+      ]);
+      const bridge = new NetBridge(this.session, { lobby, isHost, user, profile });
+      this.session.net = bridge;
+      await bridge.start();
+
+      if (voice) {
+        const vc = new VoiceChat(audio, this.map);
+        this.session.voice = vc;
+        const stream = await vc.startCapture({ pushToTalk: false });
+        if (stream) await bridge.transport.attachVoice(stream);
+      }
+    }
     return this.session;
   }
 
@@ -347,7 +362,7 @@ async function boot() {
     await audio.init();
     audio.startAmbience();
     app.menuOrbit = false;
-    app.beginMatch(opts);
+    await app.beginMatch(opts);
     prompt.style.display = '';
   };
   await shell.start();

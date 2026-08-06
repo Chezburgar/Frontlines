@@ -71,7 +71,13 @@ export class Shell {
 
   async start() {
     this.show();
-    const user = await Net.currentUser();
+    // Show the front page immediately rather than blocking on a network round trip —
+    // a cold Supabase call can take a second, and staring at nothing is the worst
+    // possible first impression.
+    this.renderFront({ checking: true });
+
+    let user = null;
+    try { user = await Net.currentUser(); } catch { /* offline is fine */ }
     if (user) {
       this.user = user;
       try {
@@ -83,11 +89,54 @@ export class Shell {
         console.warn('[shell] profile load failed', e);
       }
     }
-    this.renderAuth();
+    this.renderFront({ checking: false });
+  }
+
+  /**
+   * Front page. The wordmark over the live map orbit, with the three things someone
+   * landing here actually wants: play now, sign in, or read what this is.
+   */
+  renderFront({ checking = false } = {}) {
+    this.clear();
+    const wrap = el('div', 'front', this.root);
+
+    const mark = el('div', 'wordmark', wrap);
+    el('span', 'w1', mark, 'FRONT');
+    el('span', 'w2', mark, 'LINES');
+    el('div', 'tagline', wrap, 'Tactical 5v5 close-quarters combat');
+    el('div', 'exclusive', wrap, 'A Chezburger Pro exclusive');
+
+    const actions = el('div', 'front-actions', wrap);
+
+    btn('PLAY NOW', actions, 'primary big', () => {
+      this.profile = this.profile ?? {
+        username: 'OPERATOR', banner: DEFAULT_BANNER, level: 1, role: 'player', skins: {},
+      };
+      this.hide();
+      this.onStartMatch?.({ offline: true, profile: this.profile });
+    });
+    btn(checking ? 'CHECKING SESSION…' : 'SIGN IN', actions, 'big', () => {
+      if (!checking) this.renderAuth('in');
+    });
+    btn('CREATE ACCOUNT', actions, 'ghost big', () => this.renderAuth('up'));
+
+    const feats = el('div', 'front-feats', wrap);
+    const feat = (t, d) => {
+      const f = el('div', 'feat', feats);
+      el('h3', '', f, t);
+      el('p', '', f, d);
+    };
+    feat('TEAHOUSE', 'A walled Japanese estate around an open courtyard. Two storeys, sixteen rooms, breachable walls and paper screens that stop sight but not bullets.');
+    feat('DESTRUCTION', 'Shoot through what you can, reinforce what you cannot. Every surface has a real penetration value that bullets spend as they pass through it.');
+    feat('THE ROUND', 'Prep, breach, plant, hold. No respawns — one life, five operators, and whatever you brought with you.');
+
+    el('div', 'front-foot', wrap, 'WASD move · Shift sprint · Ctrl crouch · Q/E lean · F interact · R reload');
   }
 
   renderAuth(mode = 'in') {
-    const body = this.screen('FRONTLINES', { sub: 'A Chezburger Pro exclusive' });
+    const body = this.screen('ACCOUNT', {
+      back: () => this.renderFront(), sub: 'Progress, cosmetics and online play',
+    });
     const card = el('div', 'card auth', body);
 
     const tabs = el('div', 'tabs', card);

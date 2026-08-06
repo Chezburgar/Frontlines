@@ -43,6 +43,11 @@ export class Session {
     this.match = new Match(this, {});
     this.match.on((ev) => this.onMatchEvent(ev));
 
+    this.net = null;          // NetBridge, when online
+    this.voice = null;        // VoiceChat, when online
+    this.botsEnabled = true;
+    this.tick = 0;
+
     this._tmpA = new THREE.Vector3();
     this._tmpB = new THREE.Vector3();
     this._lastLook = new THREE.Vector2();
@@ -126,7 +131,9 @@ export class Session {
     p.stance = ctrl.stance;
     p.ads = ctrl.ads;
 
-    this.match.update(dt);
+    this.tick++;
+    // Only the host advances the round state machine; clients take it from snapshots.
+    if (!this.net || this.net.isHost) this.match.update(dt);
 
     const w = this.weapon;
     if (w) w.update(dt);
@@ -149,7 +156,15 @@ export class Session {
       reloadProgress: w && w.reloading > 0 ? 1 - w.reloading / Math.max(0.001, w.reloadTotal) : 0,
     });
 
-    for (const b of this.bots ?? []) b.update(dt);
+    // Bots exist only on the host (or offline) — a client would otherwise simulate its
+    // own divergent copy of every one of them.
+    if (this.botsEnabled) for (const b of this.bots ?? []) { if (!b.retired) b.update(dt); }
+
+    if (this.net) {
+      if (this.net.isHost) this.net.hostTick(dt);
+      else this.net.clientTick(dt, cmd);
+    }
+    if (this.voice) this.voice.update(dt, this.players, cmd.voice);
 
     audio.updateListener(this.app.camera);
     this.updateFootsteps(dt);
@@ -202,6 +217,18 @@ export class Session {
     const cam = this.app.camera;
     const origin = this._tmpA.copy(cam.position);
     const forward = this._tmpB.set(0, 0, -1).applyQuaternion(cam.quaternion);
+
+    // As a client, the host owns damage: report the ray and let it re-trace. Local
+    // feedback (recoil, flash, sound) still fires immediately so shooting feels instant.
+    if (this.net && !this.net.isHost) {
+      this.net.reportShot(origin, forward);
+      const [rv0, rh0] = w.recoil();
+      this.app.player.addRecoil(rv0, rh0 * (Math.random() < 0.5 ? -1 : 1));
+      this.viewmodel.addRecoil(rv0, rh0);
+      this.flash(w);
+      audio.gunshot({ weapon: w.def, firstPerson: true, suppressed: w.def.attach?.barrel === 'suppressor' });
+      return;
+    }
 
     const cone = w.cone(ctrl.ads, ctrl.speed, ctrl.grounded);
     const pellets = w.def.pellets ?? 1;
@@ -399,6 +426,11 @@ export class Session {
   /* ----------------------------------------------------------------- events */
 
   onMatchEvent(ev) {
+    // The host is the only authority on round events, so it mirrors them to everyone.
+    this.net?.mirrorEvent?.(ev.type, {
+      targetName: ev.targetName, attackerName: ev.attackerName,
+      headshot: ev.headshot, winner: ev.winner, reason: ev.reason, score: ev.score,
+    });
     switch (ev.type) {
       case 'player:killed':
         this.hud.addKill({
