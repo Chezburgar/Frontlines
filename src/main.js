@@ -10,6 +10,9 @@ import { FrontlineRenderer, QUALITY } from './core/renderer.js';
 import { GameMap } from './world/map.js';
 import { buildLighting } from './world/lighting.js';
 import { playIntro } from './ui/intro.js';
+import { Input } from './core/input.js';
+import { PlayerController } from './game/controller.js';
+import { createOperator, OperatorAnimator } from './game/character.js';
 
 const BASE = import.meta.env.BASE_URL || '/';
 
@@ -86,9 +89,19 @@ class App {
     const lampCount = this.lighting.interior.buildFromPoints(this.map.lights);
     console.info(`[lighting] ${lampCount} interior sources`);
 
-    setProgress(0.9, 'Compiling shaders');
-    // Place the camera somewhere inside before the first compile so the warm-up actually
-    // touches the materials that will be used.
+    setProgress(0.86, 'Rigging operators');
+    this.input = new Input(el.canvas);
+    this.player = new PlayerController(this.map, this.camera, this.input);
+    const spawn = this.map.spawns.attack[0]?.points[0] ?? { x: 0, y: 0, z: 12 };
+    this.player.teleport(spawn.x, spawn.y + 0.1, spawn.z, Math.PI);
+
+    // A third-person body for the local player, used for shadows now and for the
+    // spectator/killcam views later. Remote players will each get one of these.
+    this.bodyRig = createOperator({ team: 'attack' });
+    this.bodyAnim = new OperatorAnimator(this.bodyRig);
+    this.scene.add(this.bodyRig.group);
+
+    setProgress(0.94, 'Compiling shaders');
     this.spawnCamera();
     this.lighting.sun.update(this.camera);
     this.renderer.renderer.compile(this.scene, this.camera);
@@ -126,9 +139,26 @@ class App {
     this.renderer.render(this.scene, this.camera, dt);
   }
 
-  /** Overridden once the player controller exists; free-look orbit for bring-up. */
   update(dt) {
-    if (this.controller) this.controller.update(dt);
+    if (!this.player) return;
+    const cmd = this.input.poll(this.player.ads);
+    this.player.update(dt, cmd);
+
+    // Drive the third-person body from the controller's state. It is offset behind the
+    // camera's eye so the local player never sees the inside of their own head.
+    const p = this.player;
+    this.bodyRig.group.position.set(p.position.x, p.position.y, p.position.z);
+    this.bodyRig.group.rotation.y = p.yaw;
+    this.bodyAnim.update(dt, {
+      speed: p.speed,
+      grounded: p.grounded,
+      crouch: p.stance === 1 ? 1 : p.stance === 2 ? 1.7 : 0,
+      lean: p.lean,
+      pitch: p.pitch,
+      aim: p.ads,
+    });
+
+    if (cmd.menu) this.input.releaseLock();
   }
 
   /**
@@ -241,8 +271,18 @@ async function boot() {
 
   app.start();
 
-  const { attachFreeCam } = await import('./core/freecam.js');
-  app.controller = attachFreeCam(app.camera, el.canvas, app.renderer);
+  // Pointer lock has to originate from a user gesture, so prompt rather than grab it.
+  const prompt = document.createElement('div');
+  prompt.id = 'clickprompt';
+  prompt.innerHTML = '<b>CLICK TO DEPLOY</b><span>WASD move &middot; Shift sprint &middot; Ctrl crouch &middot; Q/E lean &middot; Esc release</span>';
+  el.ui.appendChild(prompt);
+  const grab = () => app.input.requestLock();
+  prompt.addEventListener('click', grab);
+  el.canvas.addEventListener('click', grab);
+  app.input.onUnlock = () => { prompt.style.display = ''; };
+  document.addEventListener('pointerlockchange', () => {
+    prompt.style.display = app.input.locked ? 'none' : '';
+  });
 }
 
 boot().catch(fatal);

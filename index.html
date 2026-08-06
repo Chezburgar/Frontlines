@@ -65,6 +65,18 @@
   #loader .tip { position: absolute; bottom: 42px; font-size: 14px; color: var(--text-dim); max-width: 620px; text-align: center; line-height: 1.6; }
   #loader .tip b { color: var(--accent-2); font-weight: 600; }
 
+  #clickprompt {
+    position: fixed; inset: 0; z-index: 500;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 14px; cursor: pointer;
+    background: radial-gradient(60% 50% at 50% 50%, rgba(7,9,13,.55), rgba(7,9,13,.86));
+  }
+  #clickprompt b {
+    font-size: 26px; letter-spacing: .30em; text-indent: .30em; color: var(--accent-2);
+    font-weight: 600;
+  }
+  #clickprompt span { font-size: 14px; letter-spacing: .10em; color: var(--text-dim); }
+
   #fatal {
     position: fixed; inset: 0; z-index: 9999; display: none;
     background: #0a0c11; color: #e6ebf2; padding: 48px;
