@@ -74,11 +74,17 @@ const LIMBS = [
   { from: 'forearmR', to: 'handR', mat: 'cloth', sides: 8,
     sections: [[0, 0.048, 0.048], [0.8, 0.038, 0.038], [1, 0.034, 0.034]] },
 
-  // legs
-  { from: 'thighL', to: 'shinL', mat: 'cloth', sections: [[0, 0.093, 0.098], [1, 0.062, 0.066]], sides: 8 },
-  { from: 'shinL', to: 'footL', mat: 'cloth', sections: [[0, 0.060, 0.064], [0.7, 0.050, 0.054], [1, 0.055, 0.058]], sides: 8 },
-  { from: 'thighR', to: 'shinR', mat: 'cloth', sections: [[0, 0.093, 0.098], [1, 0.062, 0.066]], sides: 8 },
-  { from: 'shinR', to: 'footR', mat: 'cloth', sections: [[0, 0.060, 0.064], [0.7, 0.050, 0.054], [1, 0.055, 0.058]], sides: 8 },
+  // Legs. Intermediate rings give the knee geometry to bend through, and the thigh runs
+  // past t=1 so it overlaps the shin: two tubes meeting exactly at the joint split open
+  // visibly on a deep crouch, because neither has vertices there to deform.
+  { from: 'thighL', to: 'shinL', mat: 'cloth', sides: 10,
+    sections: [[0, 0.095, 0.100], [0.45, 0.080, 0.084], [0.8, 0.068, 0.072], [1.16, 0.061, 0.065]] },
+  { from: 'shinL', to: 'footL', mat: 'cloth', sides: 10,
+    sections: [[-0.14, 0.064, 0.068], [0.35, 0.056, 0.060], [0.75, 0.050, 0.054], [1, 0.055, 0.058]] },
+  { from: 'thighR', to: 'shinR', mat: 'cloth', sides: 10,
+    sections: [[0, 0.095, 0.100], [0.45, 0.080, 0.084], [0.8, 0.068, 0.072], [1.16, 0.061, 0.065]] },
+  { from: 'shinR', to: 'footR', mat: 'cloth', sides: 10,
+    sections: [[-0.14, 0.064, 0.068], [0.35, 0.056, 0.060], [0.75, 0.050, 0.054], [1, 0.055, 0.058]] },
 ];
 
 /** Rigid attachments — helmet, boots, pouches. Bound fully to one bone each. */
@@ -152,17 +158,17 @@ function solveWeights(p, segments, maxInfluences = 4) {
   const scored = [];
   for (const seg of segments) {
     const d = distanceToSegment(p, seg.a, seg.b);
-    // Steep falloff. A gentler curve (d^3) let the chest and spine bones reach the upper
-    // arm — close in space but unrelated in the hierarchy — and the shoulder caps tore
-    // apart the moment the arms swung forward to aim.
-    scored.push({ index: seg.index, w: 1 / (Math.pow(d, 6) + 1e-6) });
+    // Falloff is a balance: too gentle (d^3) and the chest reaches the upper arm, tearing
+    // the shoulder when it swings to aim; too steep (d^6) and a vertex at the knee snaps
+    // entirely to thigh or shin, splitting the leg open on a deep crouch. d^4 blends the
+    // joint while staying local. The shoulder is solved geometrically instead — the arm
+    // sweeps as one piece — so the weighting no longer has to carry that case.
+    scored.push({ index: seg.index, w: 1 / (Math.pow(d, 4) + 1e-5) });
   }
   scored.sort((a, b) => b.w - a.w);
   const top = scored.slice(0, maxInfluences);
-  // Drop influences that are negligible next to the dominant bone; keeping four bones on
-  // every vertex is what smears a joint across the whole limb.
   const best = top[0]?.w ?? 1;
-  const kept = top.filter((t) => t.w > best * 0.02);
+  const kept = top.filter((t) => t.w > best * 0.03);
   const total = kept.reduce((s, t) => s + t.w, 0) || 1;
   const idx = [0, 0, 0, 0], wt = [0, 0, 0, 0];
   for (let i = 0; i < kept.length; i++) { idx[i] = kept[i].index; wt[i] = kept[i].w / total; }
@@ -426,13 +432,14 @@ export class OperatorAnimator {
     const pitch = THREE.MathUtils.clamp(s.pitch ?? 0, -1.2, 1.2);
     const aim = s.aim ?? 0;
 
-    // Legs: swing plus a crouch-driven bend.
-    set('thighL', sw * 0.62 - crouch * 0.95, 0, 0);
-    set('shinL', Math.max(0, -sw * 0.5) + crouch * 1.5, 0, 0);
-    set('thighR', swAlt * 0.62 - crouch * 0.95, 0, 0);
-    set('shinR', Math.max(0, -swAlt * 0.5) + crouch * 1.5, 0, 0);
-    set('footL', -sw * 0.2 - crouch * 0.55, 0, 0);
-    set('footR', -swAlt * 0.2 - crouch * 0.55, 0, 0);
+    // Legs: swing plus a crouch-driven bend. Angles stay moderate — a full squat looks
+    // right on a still frame but the skinned knee cannot carry that much rotation.
+    set('thighL', sw * 0.62 - crouch * 0.70, 0, 0);
+    set('shinL', Math.max(0, -sw * 0.5) + crouch * 1.05, 0, 0);
+    set('thighR', swAlt * 0.62 - crouch * 0.70, 0, 0);
+    set('shinR', Math.max(0, -swAlt * 0.5) + crouch * 1.05, 0, 0);
+    set('footL', -sw * 0.2 - crouch * 0.38, 0, 0);
+    set('footR', -swAlt * 0.2 - crouch * 0.38, 0, 0);
 
     // Hips absorb the gait and carry the lean.
     set('hips', crouch * 0.30, sw * 0.06, lean * 0.12);

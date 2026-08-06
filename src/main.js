@@ -152,7 +152,7 @@ class App {
     this.bodyAnim.update(dt, {
       speed: p.speed,
       grounded: p.grounded,
-      crouch: p.stance === 1 ? 1 : p.stance === 2 ? 1.7 : 0,
+      crouch: p.stance === 1 ? 1 : p.stance === 2 ? 1.35 : 0,
       lean: p.lean,
       pitch: p.pitch,
       aim: p.ads,
