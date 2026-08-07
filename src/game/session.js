@@ -145,10 +145,19 @@ export class Session {
     const w = this.weapon;
     if (w) w.update(dt);
 
-    // Buy menu is prep-only, and while it is open the player is frozen.
+    // Prep-only state has to be torn down here, before any early return below can skip
+    // it. If preparation ended while the buy menu was open, input stayed disabled and the
+    // spawn barrier kept pushing — which read in-game as simply being unable to move or
+    // shoot once the round started.
+    if (this.match.phase !== PHASE.PREP) {
+      if (this.buy.open) this.buy.close();
+      this.app.player.prepBarrier = null;
+      this.app.input.enabled = true;
+    }
+
+    // While the buy menu is open the player is frozen.
     if (cmd.menu && this.buy.open) this.buy.close();
     else if (this.buy.open) { this.updateHUD(cmd); return; }
-    if (this.match.phase === PHASE.PREP && cmd.voice === false) { /* reserved */ }
     if (cmd.buyMenu && this.match.phase === PHASE.PREP) this.buy.toggle();
 
     if (cmd.drone) this.toggleDrone();

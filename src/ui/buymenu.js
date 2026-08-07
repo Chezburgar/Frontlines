@@ -49,10 +49,13 @@ export class BuyMenu {
   }
 
   close() {
-    if (!this.open) return;
+    // Not guarded on `open`: this also serves as the recovery path if anything else left
+    // input disabled, and re-enabling input must never be conditional.
+    const wasOpen = this.open;
     this.open = false;
     this.root.style.display = 'none';
     this.s.app.input.enabled = true;
+    if (!wasOpen) return;
     this.apply();
     this._onClose?.();
     audio.ui('tick');

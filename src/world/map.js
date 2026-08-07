@@ -74,7 +74,8 @@ export class GameMap {
    */
   rebuildCollision() {
     const positions = [];
-    const owners = [];     // per-triangle back-reference for surface lookup
+    const owners = [];         // index -> source mesh
+    const ownerOfVertex = [];  // per-vertex owner index
 
     const v = new THREE.Vector3();
     const collect = (group) => {
@@ -87,13 +88,13 @@ export class GameMap {
         const idx = g.index;
         o.updateWorldMatrix(true, false);
         const m = o.matrixWorld;
+        const ownerIndex = owners.push(o) - 1;
         const count = idx ? idx.count : pos.count;
         for (let i = 0; i < count; i++) {
           v.fromBufferAttribute(pos, idx ? idx.getX(i) : i).applyMatrix4(m);
           positions.push(v.x, v.y, v.z);
+          ownerOfVertex.push(ownerIndex);
         }
-        const tris = count / 3;
-        for (let t = 0; t < tris; t++) owners.push(o);
       });
     };
     collect(this.staticGroup);
@@ -103,6 +104,13 @@ export class GameMap {
     this._owners = owners;
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(positions), 3));
+    // Which mesh a triangle came from is stored per *vertex*, not per triangle index.
+    // MeshBVH reorders the index buffer for spatial locality, so a triangle's position in
+    // that buffer no longer matches the order it was appended in — looking owners up by
+    // faceIndex returned a different mesh entirely, which meant bullets resolved against
+    // the wrong surface and destructible pieces were almost never the ones actually hit.
+    // Vertex data is not reordered, so this survives the rebuild.
+    geo.setAttribute('ownerIndex', new THREE.BufferAttribute(new Uint32Array(ownerOfVertex), 1));
     this.bvh = new MeshBVH(geo, { maxLeafTris: 8 });
     geo.boundsTree = this.bvh;
 
@@ -121,7 +129,10 @@ export class GameMap {
     const hits = this._ray.intersectObject(this.collider, false);
     if (!hits.length) return null;
     const h = hits[0];
-    const mesh = this._owners?.[h.faceIndex] ?? null;
+    // Resolve the owner through a vertex of the hit face — see rebuildCollision.
+    const attr = this.collider.geometry.attributes.ownerIndex;
+    const vi = h.face ? h.face.a : (h.faceIndex ?? 0) * 3;
+    const mesh = attr ? (this._owners?.[attr.getX(vi)] ?? null) : null;
     const piece = mesh?.userData.piece ?? null;
     const surfName = piece?.surface ?? mesh?.material?.userData?.surface ?? 'plaster';
     return {
