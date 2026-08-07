@@ -114,6 +114,10 @@ const cyl = (r, h, m, pos, seg = 10) => {
   return n;
 };
 
+export function buildGadgetModel(type) {
+  return buildModel(type);
+}
+
 function buildModel(type) {
   const M = mats();
   const g = new THREE.Group();

@@ -296,8 +296,24 @@ export class HUD {
         player.stance === 2 ? 'PRONE' : player.stance === 1 ? 'CROUCH' : 'STAND');
     } else this.bl.style.display = 'none';
 
-    // ---- ammo -------------------------------------------------------------
-    if (weapon && this.visible.ammo) {
+    // ---- ammo / gadget ----------------------------------------------------
+    const gadget = state.gadgetHeld;
+    if (gadget && this.visible.ammo) {
+      // A held gadget replaces the ammo readout — showing rifle rounds while holding a
+      // grenade is exactly the confusion that made gadgets feel broken.
+      this.br.style.display = '';
+      this._set(this.ammoMag, 'mag', String(gadget.count));
+      this._set(this.ammoRes, 'res', '');
+      this._set(this.ammoSep, 'sep', '');
+      this._set(this.weaponName, 'wn', gadget.def.name.toUpperCase());
+      const cook = state.cookTime ?? 0;
+      this._set(this.fireMode, 'fm',
+        cook > 0 ? `COOKING ${cook.toFixed(1)}s`
+          : gadget.def.kind === 'throw' ? 'HOLD FIRE TO COOK' : 'FIRE TO PLACE');
+      this.ammoMag.classList.toggle('low', gadget.count <= 1);
+      this.br.classList.toggle('reloading', false);
+    } else if (weapon && this.visible.ammo) {
+      this._set(this.ammoSep, 'sep', '/');
       this.br.style.display = '';
       this._set(this.ammoMag, 'mag', String(weapon.ammo));
       this._set(this.ammoRes, 'res', String(weapon.reserve));

@@ -213,6 +213,30 @@ export class ViewModel {
     this.current = buildWeaponModel(weaponDef);
     this.root.add(this.current.root);
     this.def = weaponDef;
+    this.isGadget = false;
+    return this.current;
+  }
+
+  /**
+   * Puts a gadget in the player's hands instead of a weapon.
+   *
+   * Without this, selecting a grenade changed nothing on screen — the rifle stayed up, so
+   * there was no way to tell a gadget was even equipped, let alone that it could be
+   * thrown. The model is supplied by the gadget system so the two never disagree.
+   */
+  setGadget(model, def) {
+    if (this.current) this.root.remove(this.current.root);
+    const holder = new THREE.Group();
+    model.scale.setScalar(1.9);           // held close to the eye, so scale it up to read
+    model.position.set(0, 0, 0);
+    holder.add(model);
+    const muzzle = new THREE.Object3D();
+    muzzle.position.set(0, 0, -0.1);
+    holder.add(muzzle);
+    this.current = { root: holder, muzzle, sightY: 0.05, layout: null, materials: {} };
+    this.root.add(holder);
+    this.def = { ...def, zoom: 1.0, class: 'Gadget', picked: { sight: { reticle: 'none' } } };
+    this.isGadget = true;
     return this.current;
   }
 

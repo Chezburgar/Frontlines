@@ -17,8 +17,9 @@ import { BotBrain } from './bots.js';
 import { audio } from '../core/audio.js';
 import { surfaceOf } from '../world/materials.js';
 import { applySkin } from '../ui/banner.js';
-import { GadgetSystem, GADGETS, SIDE } from './gadgets.js';
+import { GadgetSystem, GADGETS, SIDE, buildGadgetModel } from './gadgets.js';
 import { BuyMenu } from '../ui/buymenu.js';
+import { Drone } from './drone.js';
 
 const DEFAULT_LOADOUT = {
   primary: { id: 'ar556', attach: { sight: 'holo', barrel: 'compensator', grip: 'vertical', under: 'none' } },
@@ -150,8 +151,14 @@ export class Session {
     if (this.match.phase === PHASE.PREP && cmd.voice === false) { /* reserved */ }
     if (cmd.buyMenu && this.match.phase === PHASE.PREP) this.buy.toggle();
 
+    if (cmd.drone) this.toggleDrone();
+    if (this.drone) {
+      this.drone.update(dt, cmd, this.driving);
+      if (!this.drone.alive) this.exitDrone();
+    }
     if (cmd.ping) this.dropPing();
     this.handleGadgets(dt, cmd);
+    this.updatePrepBarrier();
 
     if (this.match.phase === PHASE.ACTION || this.match.phase === PHASE.PLANTED
         || this.match.phase === PHASE.PREP) {
@@ -215,6 +222,7 @@ export class Session {
     if (!w) return;
     const ctrl = this.app.player;
 
+    if (cmd.weaponSlot >= 0 && this.local.holdingGadget) { this.stowGadget(); if (cmd.weaponSlot === this.local.slot) return; }
     if (cmd.weaponSlot >= 0 && cmd.weaponSlot < this.local.weapons.length && cmd.weaponSlot !== this.local.slot) {
       this.local.slot = cmd.weaponSlot;
       w.cancelReload();
@@ -235,6 +243,8 @@ export class Session {
     if ((cmd.fire || cmd.firePressed) && w.reloading > 0 && w.def.shellByShell && w.ammo > 0) w.cancelReload();
 
     if (ctrl.sprinting) return;
+    // The fire button throws the equipped gadget instead of firing the weapon.
+    if (this.local.holdingGadget) return;
 
     const now = performance.now() / 1000;
     if (w.tryFire(now, cmd.fire, cmd.firePressed)) this.fire(w);
@@ -382,44 +392,196 @@ export class Session {
 
   /* ---------------------------------------------------------------- gadgets */
 
+  /**
+   * Gadget selection and use.
+   *
+   * Selecting a gadget actually equips it: the viewmodel swaps to the grenade and the fire
+   * button throws or places it. The previous scheme left the rifle on screen and bound
+   * throwing to a separate key, which gave no indication a gadget was equipped at all.
+   */
   handleGadgets(dt, cmd) {
     const local = this.local;
     if (!local.gadgets?.length) return;
-    if (cmd.gadgetSlot >= 0 && cmd.gadgetSlot < local.gadgets.length) {
-      local.gadgetSlot = cmd.gadgetSlot;
-      audio.ui('tick');
-    }
-    const g = local.gadgets[local.gadgetSlot ?? 0];
-    if (!g || g.count <= 0) return;
 
-    // Throwables cook while held and release on the way up; placeables go on the surface
-    // you are looking at.
+    // 3 / 4 equip a gadget; 1 / 2 (handled in handleWeapon) put it away.
+    if (cmd.gadgetSlot >= 0 && cmd.gadgetSlot < local.gadgets.length) {
+      if (local.holdingGadget && local.gadgetSlot === cmd.gadgetSlot) {
+        this.stowGadget();
+      } else {
+        local.gadgetSlot = cmd.gadgetSlot;
+        this.equipGadget();
+      }
+      return;
+    }
+    if (!local.holdingGadget) return;
+
+    const g = local.gadgets[local.gadgetSlot ?? 0];
+    if (!g || g.count <= 0) { this.stowGadget(); return; }
+
     const cam = this.app.camera;
     const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(cam.quaternion);
 
     if (g.def.kind === 'throw') {
-      if (cmd.useGadget) {
+      // Hold to cook, release to throw. Holding also shows the cook time on the HUD.
+      if (cmd.fire) {
         this._cook = (this._cook ?? 0) + dt;
-      } else if (this._cook > 0) {
-        const power = Math.min(1, 0.45 + this._cook * 0.7);
-        this._cook = 0;
-        const origin = cam.position.clone().addScaledVector(dir, 0.4);
-        this.gadgets.throwGrenade(g.id, local, origin, dir, power);
-        g.count--;
-      }
-    } else if (g.def.kind === 'place' && cmd.useGadgetPressed) {
-      const hit = this.map.raycast(cam.position, dir, 2.6);
-      if (hit) {
-        // Breach charges only stick to something breachable.
-        if (g.id === 'breach' && !hit.piece?.reinforceable) {
-          this.hud.showBanner('CANNOT BREACH THIS SURFACE', '', 1200);
-          audio.ui('deny');
-          return;
+        this.cookTime = this._cook;
+        // A cooked frag that runs out detonates in your hand, as it should.
+        if (g.def.fuse > 0 && this._cook > g.def.fuse) {
+          this.gadgets.throwGrenade(g.id, local, cam.position.clone(), dir, 0.05)
+            .fuse = 0.01;
+          g.count--; this._cook = 0; this.cookTime = 0;
+          this.afterGadgetUse(g);
         }
-        this.gadgets.place(g.id, local, hit);
+      } else if (this._cook > 0) {
+        const power = Math.min(1, 0.5 + this._cook * 0.6);
+        const thrown = this.gadgets.throwGrenade(
+          g.id, local, cam.position.clone().addScaledVector(dir, 0.45), dir, power);
+        // Cooking eats into the fuse — that is the whole point of holding it.
+        if (thrown && g.def.fuse > 0) thrown.fuse = Math.max(0.25, g.def.fuse - this._cook);
+        this._cook = 0; this.cookTime = 0;
         g.count--;
-      } else audio.ui('deny');
+        audio.ui('tick');
+        this.afterGadgetUse(g);
+      }
+    } else if (g.def.kind === 'place' && cmd.firePressed) {
+      const hit = this.map.raycast(cam.position, dir, 2.8);
+      if (!hit) { this.hud.showBanner('NOTHING TO PLACE ON', '', 1000); audio.ui('deny'); return; }
+      if (g.id === 'breach' && !hit.piece?.reinforceable) {
+        this.hud.showBanner('CANNOT BREACH THIS SURFACE', '', 1200);
+        audio.ui('deny');
+        return;
+      }
+      this.gadgets.place(g.id, local, hit);
+      g.count--;
+      this.afterGadgetUse(g);
     }
+  }
+
+  /**
+   * Holds each team in its own area during preparation.
+   *
+   * Attackers stay outside the estate wall, defenders stay inside the building envelope.
+   * Both are released the instant the action phase starts.
+   */
+  updatePrepBarrier() {
+    const ctrl = this.app.player;
+    if (this.match.phase !== PHASE.PREP) {
+      ctrl.prepBarrier = null;
+      if (this._barrierWarned) this._barrierWarned = false;
+      return;
+    }
+    const attacking = this.match.sideOf[this.local.team] === TEAM.ATTACK;
+    // The estate wall sits at 30 x 26; the building envelope at 18 x 15.
+    ctrl.prepBarrier = attacking
+      ? { x: 30, z: 26, keepOutside: true }
+      : { x: 18.6, z: 15.6, keepOutside: false };
+
+    if (ctrl.blockedByBarrier && !this._barrierWarned) {
+      this._barrierWarned = true;
+      this.hud.showBanner(attacking ? 'HOLD UNTIL THE ACTION PHASE' : 'STAY INSIDE THE BUILDING',
+        'Preparation', 1600);
+      audio.ui('deny');
+      setTimeout(() => { this._barrierWarned = false; }, 2600);
+    }
+  }
+
+  /* ------------------------------------------------------------------ drone */
+
+  /**
+   * Deploys or re-enters the drone. Driving swaps which camera renders, so the player's
+   * body stays exactly where it was left and remains vulnerable throughout.
+   */
+  toggleDrone() {
+    if (this.match.sideOf[this.local.team] !== TEAM.ATTACK) {
+      this.hud.showBanner('DRONES ARE ATTACKER EQUIPMENT', '', 1200);
+      audio.ui('deny');
+      return;
+    }
+    if (this.driving) { this.exitDrone(); return; }
+
+    if (!this.drone || !this.drone.alive) {
+      const ctrl = this.app.player;
+      const fwd = new THREE.Vector3(-Math.sin(ctrl.yaw), 0, -Math.cos(ctrl.yaw));
+      const at = ctrl.position.clone().addScaledVector(fwd, 1.1);
+      at.y += 0.4;
+      this.drone = new Drone(this, this.local, at);
+    }
+    this.driving = true;
+    this.local.driving = true;
+    this.stowGadget();
+    this.hud.showBanner('DRONE', 'T to exit', 1200);
+    audio.ui('confirm');
+  }
+
+  exitDrone() {
+    if (!this.driving) return;
+    this.driving = false;
+    this.local.driving = false;
+    audio.ui('tick');
+  }
+
+  /** Which camera the frame should be rendered from. */
+  get activeCamera() {
+    return this.driving && this.drone?.alive ? this.drone.camera : this.app.camera;
+  }
+
+  equipGadget() {
+    const g = this.local.gadgets[this.local.gadgetSlot ?? 0];
+    if (!g || g.count <= 0) { audio.ui('deny'); return; }
+    this.local.holdingGadget = true;
+    this.viewmodel.setGadget(buildGadgetModel(g.id), g.def);
+    audio.ui('tick');
+  }
+
+  stowGadget() {
+    if (!this.local.holdingGadget) return;
+    this.local.holdingGadget = false;
+    this._cook = 0;
+    this.cookTime = 0;
+    this._equipViewmodel();
+  }
+
+  /** Out of a gadget: go back to the weapon rather than holding nothing. */
+  afterGadgetUse(g) {
+    if (g.count <= 0) this.stowGadget();
+  }
+
+  /**
+   * A standing marker on the objective.
+   *
+   * Carrying the charge with no idea where it goes is the single most disorienting thing
+   * about a first round, so the site is marked permanently for whoever holds it — and for
+   * defenders, so they know what they are protecting. It refreshes rather than piling up.
+   */
+  updateObjectiveMarker() {
+    const m = this.match;
+    const site = m.site;
+    if (!site || m.phase === PHASE.ENDED || m.phase === PHASE.MATCH_OVER) return;
+
+    const show = m.phase === PHASE.PLANTED
+      ? true
+      : (this.local.hasBomb || m.sideOf[this.local.team] === TEAM.DEFEND);
+    if (!show) { this._objPing = null; return; }
+
+    const now = performance.now() / 1000;
+    if (this._objPing && now - this._objPing.born < 4) return;
+
+    // Once planted, mark the charge itself; before that, mark the site centre.
+    let point;
+    let label;
+    if (m.bomb.planted && m.bomb.position) {
+      point = m.bomb.position.clone().add(new THREE.Vector3(0, 0.5, 0));
+      label = 'CHARGE';
+    } else {
+      const room = this.map.rooms.find((r) => r.id === site.rooms[0]);
+      if (!room) return;
+      point = new THREE.Vector3(
+        (room.rect[0] + room.rect[2]) / 2, room.y + 1.2, (room.rect[1] + room.rect[3]) / 2);
+      label = m.sideOf[this.local.team] === TEAM.DEFEND ? `DEFEND — ${room.name.toUpperCase()}`
+        : `PLANT — ${room.name.toUpperCase()}`;
+    }
+    this._objPing = this.hud.addPing({ position: point, kind: 'objective', name: label });
   }
 
   /** Flashbang whiteout for the local player. */
@@ -522,7 +684,9 @@ export class Session {
     this.hud.update({
       match: this.match,
       player: { health: this.local.health, dbno: this.local.dbno, stance: ctrl.stance, ads: ctrl.ads },
-      weapon: w,
+      weapon: this.local.holdingGadget ? null : w,
+      gadgetHeld: this.local.holdingGadget ? this.local.gadgets[this.local.gadgetSlot ?? 0] : null,
+      cookTime: this.cookTime ?? 0,
       coneDegrees: cone * (180 / Math.PI),
       prompt: this.prompt,
       hit: this.hitFeedback,
@@ -532,6 +696,7 @@ export class Session {
       (this.local.gadgets ?? []).map((g) => ({ name: g.def.name, count: g.count })),
       this.local.gadgetSlot ?? 0);
     this.hud.setScope(w?.def?.picked?.sight, this.app.player.ads);
+    this.updateObjectiveMarker();
     this.hud.updatePings(this.app.camera, performance.now() / 1000);
   }
 

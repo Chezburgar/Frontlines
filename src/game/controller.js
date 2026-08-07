@@ -179,6 +179,28 @@ export class PlayerController {
     // walk into the void and fall forever.
     this.position.x = THREE.MathUtils.clamp(this.position.x, -BOUNDS.x, BOUNDS.x);
     this.position.z = THREE.MathUtils.clamp(this.position.z, -BOUNDS.z, BOUNDS.z);
+
+    // Prep-phase barrier: attackers are held outside the estate wall and defenders inside
+    // it until the action phase begins. Enforced as a soft push rather than a wall so it
+    // never traps anyone, and released the moment prep ends.
+    if (this.prepBarrier) {
+      const b = this.prepBarrier;
+      const inside = Math.abs(this.position.x) < b.x && Math.abs(this.position.z) < b.z;
+      if (b.keepOutside && inside) {
+        // Push to the nearest edge of the envelope.
+        const dx = b.x - Math.abs(this.position.x);
+        const dz = b.z - Math.abs(this.position.z);
+        if (dx < dz) this.position.x = Math.sign(this.position.x || 1) * b.x;
+        else this.position.z = Math.sign(this.position.z || 1) * b.z;
+        this.velocity.x *= 0.2; this.velocity.z *= 0.2;
+        this.blockedByBarrier = true;
+      } else if (!b.keepOutside && !inside) {
+        this.position.x = THREE.MathUtils.clamp(this.position.x, -b.x, b.x);
+        this.position.z = THREE.MathUtils.clamp(this.position.z, -b.z, b.z);
+        this.velocity.x *= 0.2; this.velocity.z *= 0.2;
+        this.blockedByBarrier = true;
+      } else this.blockedByBarrier = false;
+    } else this.blockedByBarrier = false;
     if (this.position.y < BOUNDS.yMin) {
       // Fell out of the world (shouldn't happen, but never strand a player).
       this.position.set(0, 1.2, 12);

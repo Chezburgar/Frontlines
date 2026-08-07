@@ -137,16 +137,27 @@ class App {
   frame() {
     const dt = Math.min(0.1, this.clock.getDelta());
     this.update(dt);
+    // Driving a drone renders from its camera instead of the player's eyes.
+    const cam = this.session?.activeCamera ?? this.camera;
+    if (cam !== this._lastCam) {
+      cam.aspect = this.camera.aspect;
+      cam.updateProjectionMatrix();
+      this._lastCam = cam;
+      this.renderer.resetHistory();
+    }
+    this._renderCam = cam;
 
-    this.lighting.sun.update(this.camera);
-    this.lighting.interior.update(this.camera.position);
+    const lc = this._renderCam ?? this.camera;
+    this.lighting.sun.update(lc);
+    this.lighting.interior.update(lc.position);
     this.renderer.markShadowsDirty();
 
-    this.renderer.applyJitter(this.camera);
-    this.renderer.render(this.scene, this.camera, dt);
+    const rc = this._renderCam ?? this.camera;
+    this.renderer.applyJitter(rc);
+    this.renderer.render(this.scene, rc, dt);
     // Viewmodel draws last, over the resolved frame, with depth cleared so the weapon
-    // never intersects world geometry.
-    this.session?.render(this.renderer.renderer);
+    // never intersects world geometry. Not while piloting the drone — there are no hands.
+    if (!this.session?.driving) this.session?.render(this.renderer.renderer);
   }
 
   /** Starts a match from the shell. Online matches additionally bring up net and voice. */
@@ -191,7 +202,30 @@ class App {
     }
     if (!this.player || !this.session) return;
     const cmd = this.input.poll(this.player.ads);
-    this.player.update(dt, cmd);
+
+    /**
+     * Movement runs on a fixed timestep, accumulated against real time.
+     *
+     * Feeding a variable frame delta straight into the controller made movement visibly
+     * choppy: collide-and-slide sub-steps, ground snapping and acceleration all behave
+     * differently at 8 ms than at 30 ms, so any frame-time jitter turned into position
+     * jitter. A fixed step means the simulation is identical every tick and only the
+     * number of ticks varies.
+     */
+    this._accum = (this._accum ?? 0) + dt;
+    const STEP = 1 / 120;
+    let steps = 0;
+    while (this._accum >= STEP && steps < 8) {
+      this.player.update(STEP, cmd);
+      this._accum -= STEP;
+      steps++;
+      // Look and one-shot actions must not be applied more than once per frame.
+      cmd.lookX = 0; cmd.lookY = 0;
+      cmd.jump = false; cmd.firePressed = false;
+    }
+    // A long stall (tab switch, GC pause) would otherwise spend minutes catching up.
+    if (this._accum > 0.25) this._accum = 0;
+
     this.session.update(dt, cmd);
 
     // Drive the third-person body from the controller's state. It is offset behind the
