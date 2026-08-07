@@ -183,24 +183,34 @@ export class PlayerController {
     // Prep-phase barrier: attackers are held outside the estate wall and defenders inside
     // it until the action phase begins. Enforced as a soft push rather than a wall so it
     // never traps anyone, and released the moment prep ends.
+    // Resolved as a capped velocity push, never as a position assignment. Snapping the
+    // position teleports the camera, which reads in-game as the view randomly jumping —
+    // and if the player is standing inside the forbidden region it does that every frame.
+    this.blockedByBarrier = false;
     if (this.prepBarrier) {
       const b = this.prepBarrier;
       const inside = Math.abs(this.position.x) < b.x && Math.abs(this.position.z) < b.z;
-      if (b.keepOutside && inside) {
-        // Push to the nearest edge of the envelope.
-        const dx = b.x - Math.abs(this.position.x);
-        const dz = b.z - Math.abs(this.position.z);
-        if (dx < dz) this.position.x = Math.sign(this.position.x || 1) * b.x;
-        else this.position.z = Math.sign(this.position.z || 1) * b.z;
-        this.velocity.x *= 0.2; this.velocity.z *= 0.2;
+      const violating = b.keepOutside ? inside : !inside;
+      if (violating) {
         this.blockedByBarrier = true;
-      } else if (!b.keepOutside && !inside) {
-        this.position.x = THREE.MathUtils.clamp(this.position.x, -b.x, b.x);
-        this.position.z = THREE.MathUtils.clamp(this.position.z, -b.z, b.z);
-        this.velocity.x *= 0.2; this.velocity.z *= 0.2;
-        this.blockedByBarrier = true;
-      } else this.blockedByBarrier = false;
-    } else this.blockedByBarrier = false;
+        // Nearest way back to legal space.
+        const push = this._tmp.set(0, 0, 0);
+        if (b.keepOutside) {
+          const dx = b.x - Math.abs(this.position.x);
+          const dz = b.z - Math.abs(this.position.z);
+          if (dx < dz) push.x = Math.sign(this.position.x || 1);
+          else push.z = Math.sign(this.position.z || 1);
+        } else {
+          if (Math.abs(this.position.x) > b.x) push.x = -Math.sign(this.position.x);
+          if (Math.abs(this.position.z) > b.z) push.z = -Math.sign(this.position.z);
+          push.normalize();
+        }
+        // Cancel motion further into the forbidden side, then drift back at walking pace.
+        const into = this.velocity.x * -push.x + this.velocity.z * -push.z;
+        if (into > 0) { this.velocity.x += push.x * into; this.velocity.z += push.z * into; }
+        this.position.addScaledVector(push, Math.min(2.2 * dt, 0.06));
+      }
+    }
     if (this.position.y < BOUNDS.yMin) {
       // Fell out of the world (shouldn't happen, but never strand a player).
       this.position.set(0, 1.2, 12);
@@ -375,12 +385,25 @@ export class PlayerController {
     eye.addScaledVector(right, this.bobAmount.x);
     eye.y += this.bobAmount.y;
 
+    // Explosion shake. Trauma decays and is applied squared, so a small hit is a subtle
+    // rumble and a close blast genuinely throws the view around.
+    this.shake = Math.max(0, (this.shake ?? 0) - dt * 1.5);
+    let sx = 0, sy = 0, sz = 0;
+    if (this.shake > 0.001) {
+      const tr = this.shake * this.shake;
+      const t = performance.now() / 1000;
+      sx = Math.sin(t * 47.3) * tr * 0.06;
+      sy = Math.sin(t * 38.7 + 1.7) * tr * 0.05;
+      sz = Math.sin(t * 29.1 + 3.1) * tr * 0.09;
+      eye.y += Math.sin(t * 52.0) * tr * 0.035;
+    }
+
     cam.position.copy(eye);
     cam.rotation.set(0, 0, 0, 'YXZ');
-    cam.rotateY(this.yaw);
-    cam.rotateX(this.pitch + this.recoilOffset.y);
+    cam.rotateY(this.yaw + sx);
+    cam.rotateX(this.pitch + this.recoilOffset.y + sy);
     // Camera roll sells the lean far more than the translation does.
-    cam.rotateZ(this.lean * 0.20 - this.bobAmount.x * 0.6);
+    cam.rotateZ(this.lean * 0.20 - this.bobAmount.x * 0.6 + sz);
 
     this.recoilOffset.multiplyScalar(Math.exp(-9 * dt));
   }

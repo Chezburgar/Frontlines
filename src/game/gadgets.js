@@ -246,6 +246,7 @@ export class GadgetSystem {
     session.scene.add(this.group);
     this.items = [];
     this.smokes = [];
+    this.blasts = [];
     this.bomb = null;
     this._v = new THREE.Vector3();
   }
@@ -396,6 +397,27 @@ export class GadgetSystem {
       if (s.age > s.duration + 2.5) { s.mesh.removeFromParent(); s.dead = true; }
     }
     this.smokes = this.smokes.filter((s) => !s.dead);
+
+    // Blast visuals: expand and fade, then release.
+    for (const b of this.blasts) {
+      b.age += dt;
+      const t = Math.min(1, b.age / b.life);
+      if (b.light) {
+        // Sharp attack, exponential falloff — a real flash is over almost immediately.
+        b.light.intensity = b.peak * Math.pow(1 - t, 2.4);
+      }
+      if (b.mesh) {
+        const s = b.from + (b.to - b.from) * (1 - Math.pow(1 - t, 2.2));
+        b.mesh.scale.setScalar(s);
+        if (b.fade) b.mesh.material.opacity = Math.pow(1 - t, 1.6);
+      }
+      if (t >= 1) {
+        b.light?.removeFromParent();
+        if (b.mesh) { b.mesh.removeFromParent(); b.mesh.geometry.dispose(); b.mesh.material.dispose(); }
+        b.dead = true;
+      }
+    }
+    this.blasts = this.blasts.filter((b) => !b.dead);
   }
 
   nearestEnemy(g) {
@@ -423,11 +445,7 @@ export class GadgetSystem {
       weapon: { penetration: 24, loudness: 1.6 },
       occlusion: audio.occlusionTo(this.s.map, pos),
     });
-    this.s.particles.emit(pos, 34, {
-      color: g.type === 'flash' ? 0xffffff : 0xffa055,
-      speed: 9, life: 0.5, size: 0.07,
-    });
-    this.s.particles.emit(pos, 22, { color: 0x33302c, speed: 5, life: 1.2, size: 0.09 });
+    this.spawnBlast(pos, g.type, def.radius ?? 3);
 
     // Damage and blind.
     for (const p of this.s.players.values()) {
@@ -477,6 +495,66 @@ export class GadgetSystem {
     }
 
     g.remove();
+  }
+
+  /**
+   * The visible blast.
+   *
+   * A grenade previously produced ~50 small particles, which at any distance looked like
+   * nothing happened. An explosion needs to read instantly and from across the map, so
+   * this layers what the eye actually picks up: a hard flash of light, an expanding
+   * fireball, a ground-hugging shockwave ring, fast debris, and smoke that lingers after
+   * the light is gone.
+   */
+  spawnBlast(pos, type, radius) {
+    const isFlash = type === 'flash';
+    const P = this.s.particles;
+
+    // 1. Light. Brief and very bright — this is what sells it in a dark interior.
+    const light = new THREE.PointLight(isFlash ? 0xffffff : 0xffb060, 0, radius * 5, 2);
+    light.position.copy(pos);
+    this.group.add(light);
+    this.blasts.push({ light, age: 0, life: isFlash ? 0.55 : 0.34, peak: isFlash ? 90 : 55 });
+
+    // 2. Fireball: an emissive shell that expands and fades within a few frames.
+    const ballMat = new THREE.MeshBasicMaterial({
+      color: isFlash ? 0xffffff : 0xffd08a, transparent: true, opacity: 1,
+      depthWrite: false, blending: THREE.AdditiveBlending,
+    });
+    const ball = new THREE.Mesh(new THREE.SphereGeometry(1, 16, 12), ballMat);
+    ball.position.copy(pos);
+    ball.scale.setScalar(0.25);
+    this.group.add(ball);
+    this.blasts.push({ mesh: ball, age: 0, life: 0.42, from: 0.25, to: radius * 0.85, fade: true });
+
+    // 3. Shockwave: a flat ring that races outward along the ground.
+    const ringMat = new THREE.MeshBasicMaterial({
+      color: isFlash ? 0xdff0ff : 0xffc890, transparent: true, opacity: 0.85,
+      side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending,
+    });
+    const ring = new THREE.Mesh(new THREE.RingGeometry(0.55, 0.8, 40), ringMat);
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.copy(pos);
+    ring.position.y += 0.12;
+    this.group.add(ring);
+    this.blasts.push({ mesh: ring, age: 0, life: 0.5, from: 0.3, to: radius * 1.5, fade: true });
+
+    // 4. Debris and sparks, thrown hard.
+    P.emit(pos, 46, {
+      color: isFlash ? 0xffffff : 0xffa040, speed: 16, spread: 1.4, life: 0.6, size: 0.10,
+    });
+    P.emit(pos, 30, { color: 0xffe6a0, speed: 24, spread: 1.6, life: 0.35, size: 0.05 });
+
+    // 5. Smoke, slower and longer-lived so something remains after the flash.
+    if (!isFlash) {
+      P.emit(pos, 40, { color: 0x4a453e, speed: 5.5, spread: 1.2, life: 2.2, size: 0.20 });
+      P.emit(pos, 18, { color: 0x1e1c19, speed: 2.5, spread: 0.8, life: 3.0, size: 0.30 });
+    }
+
+    // 6. Camera shake, scaled by distance — you should feel a blast you did not see.
+    const d = this.s.app.camera.position.distanceTo(pos);
+    const amount = Math.max(0, 1 - d / (radius * 3.2));
+    if (amount > 0.02) this.s.addShake?.(amount * (isFlash ? 0.5 : 1.1));
   }
 
   spawnSmoke(position, radius, duration) {

@@ -481,10 +481,13 @@ export class Session {
       return;
     }
     const attacking = this.match.sideOf[this.local.team] === TEAM.ATTACK;
-    // The estate wall sits at 30 x 26; the building envelope at 18 x 15.
+    // Both barriers are the building envelope (18 x 15): attackers stay out of the house,
+    // defenders stay in it. Holding attackers outside the *estate wall* was wrong — their
+    // spawns sit at z = 24.5, inside that box, so the barrier fought them from the first
+    // frame and snapped them to its edge every single tick.
     ctrl.prepBarrier = attacking
-      ? { x: 30, z: 26, keepOutside: true }
-      : { x: 18.6, z: 15.6, keepOutside: false };
+      ? { x: 19.4, z: 16.4, keepOutside: true }
+      : { x: 19.0, z: 16.0, keepOutside: false };
 
     if (ctrl.blockedByBarrier && !this._barrierWarned) {
       this._barrierWarned = true;
@@ -591,6 +594,11 @@ export class Session {
         : `PLANT — ${room.name.toUpperCase()}`;
     }
     this._objPing = this.hud.addPing({ position: point, kind: 'objective', name: label });
+  }
+
+  /** Adds trauma to the camera shake. Explosions call this scaled by distance. */
+  addShake(amount) {
+    this.app.player.shake = Math.min(1.2, (this.app.player.shake ?? 0) + amount);
   }
 
   /** Flashbang whiteout for the local player. */
