@@ -16,12 +16,21 @@ export const SLOT = { PRIMARY: 0, SECONDARY: 1 };
 
 /* --------------------------------------------------------------- attachments */
 
+/**
+ * Optics.
+ *
+ * `reticle` selects how the sight picture is drawn, and `scoped` marks the magnified
+ * optics that get a full scope overlay with a black surround — the thing that makes a
+ * 2.5x actually feel different from a red dot rather than just being a zoom number.
+ */
 export const ATTACHMENTS = {
   sight: {
-    none: { name: 'Iron Sights', adsTime: 1.0, zoom: 1.12, cone: 1.0 },
-    reflex: { name: 'Reflex', adsTime: 1.02, zoom: 1.18, cone: 0.97 },
-    holo: { name: 'Holographic', adsTime: 1.06, zoom: 1.25, cone: 0.95 },
-    acog: { name: '2.5x Scope', adsTime: 1.22, zoom: 2.5, cone: 0.88, sway: 1.35 },
+    none: { name: 'Iron Sights', adsTime: 1.0, zoom: 1.10, cone: 1.0, reticle: 'iron' },
+    reflex: { name: 'Reflex', adsTime: 1.02, zoom: 1.18, cone: 0.97, reticle: 'dot' },
+    holo: { name: 'Holographic', adsTime: 1.06, zoom: 1.25, cone: 0.95, reticle: 'holo' },
+    acog: { name: '2.5x Scope', adsTime: 1.24, zoom: 2.5, cone: 0.88, sway: 1.35, reticle: 'chevron', scoped: true },
+    scope4: { name: '4x Scope', adsTime: 1.36, zoom: 4.0, cone: 0.82, sway: 1.7, reticle: 'mildot', scoped: true },
+    scope12: { name: '12x Scope', adsTime: 1.62, zoom: 9.0, cone: 0.7, sway: 2.4, reticle: 'sniper', scoped: true },
   },
   barrel: {
     none: { name: 'None' },
@@ -90,7 +99,7 @@ export const WEAPONS = {
     adsTime: 0.34, hipCone: 0.070, adsCone: 0.0012, moveCone: 0.09,
     recoilPattern: buildPattern(0.0210, 0.0044, 21),
     recoverRate: 5.4, loudness: 1.25, weight: 1.14,
-    attachments: { sight: ['none', 'reflex', 'holo', 'acog'], barrel: ['none', 'suppressor', 'compensator', 'muzzle', 'extended'], grip: ['none', 'vertical', 'angled'], under: ['none', 'laser'] },
+    attachments: { sight: ['none', 'reflex', 'holo', 'acog', 'scope4', 'scope12'], barrel: ['none', 'suppressor', 'compensator', 'muzzle', 'extended'], grip: ['none', 'vertical', 'angled'], under: ['none', 'laser'] },
   },
   // ---- shotgun ------------------------------------------------------------
   m870: {

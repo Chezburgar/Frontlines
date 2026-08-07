@@ -209,3 +209,7 @@
   .menu-grid, .skin-grid { grid-template-columns: 1fr 1fr; }
   .two-col, .controls, .bind-list, .attach-grid { grid-template-columns: 1fr; }
 }
+
+.menu-card.locked { opacity: .82; }
+.menu-card .lock-tag { position:absolute; top:12px; right:14px; font-size:9px; letter-spacing:.18em; color:var(--text-mute); border:1px solid var(--line-2); padding:2px 6px; }
+.menu-card { position: relative; }

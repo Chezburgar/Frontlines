@@ -58,6 +58,15 @@ export class BotBrain {
     if (!p.alive) { p.speed = 0; return; }
     const m = this.s.match;
     if (m.phase === PHASE.ENDED || m.phase === PHASE.MATCH_OVER) { p.speed = 0; return; }
+    // Preparation is not a fight. Bots hold their spawn, look around, and do not shoot —
+    // attackers are outside setting up and defenders are fortifying.
+    if (m.phase === PHASE.PREP) {
+      this.target = null;
+      this.p.aiming = false;
+      this.p.speed = 0;
+      this.p.yaw = (this.p.yaw ?? 0) + Math.sin(m.timeLeft * 0.6 + this.skill * 9) * dt * 0.35;
+      return;
+    }
 
     this.weapon.update(dt);
     this.acquire(dt);

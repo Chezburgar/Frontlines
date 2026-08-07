@@ -108,12 +108,9 @@ export class Shell {
 
     const actions = el('div', 'front-actions', wrap);
 
-    btn('PLAY NOW', actions, 'primary big', () => {
-      this.profile = this.profile ?? {
-        username: 'OPERATOR', banner: DEFAULT_BANNER, level: 1, role: 'player', skins: {},
-      };
-      this.hide();
-      this.onStartMatch?.({ offline: true, profile: this.profile });
+    btn('ENTER', actions, 'primary big', () => {
+      this.ensureProfile();
+      this.renderMenu();
     });
     btn(checking ? 'CHECKING SESSION…' : 'SIGN IN', actions, 'big', () => {
       if (!checking) this.renderAuth('in');
@@ -204,21 +201,62 @@ export class Shell {
 
   /* -------------------------------------------------------------------- menu */
 
+  /** A guest profile so every offline feature works without an account. */
+  ensureProfile() {
+    if (this.profile) return this.profile;
+    let saved = null;
+    try { saved = JSON.parse(localStorage.getItem('fl.guest') || 'null'); } catch { /* corrupt */ }
+    this.profile = saved ?? {
+      username: 'OPERATOR', banner: { ...DEFAULT_BANNER }, level: 1,
+      role: 'player', skins: {}, loadouts: {}, guest: true,
+    };
+    this.profile.guest = !this.user;
+    return this.profile;
+  }
+
+  saveGuest() {
+    if (!this.profile?.guest) return;
+    try { localStorage.setItem('fl.guest', JSON.stringify(this.profile)); } catch { /* private mode */ }
+  }
+
+  /** Online features need a real account; offer the choice rather than hiding the button. */
+  requireAccount(what) {
+    if (this.user) return true;
+    const body = this.screen('ACCOUNT REQUIRED', { back: () => this.renderMenu() });
+    const card = el('div', 'card', body);
+    el('p', 'big', card, `${what} needs an account.`);
+    el('p', '', card, 'Matches with other people track stats and cosmetics against your profile, so they need somewhere to store them. Everything offline works without one.');
+    btn('SIGN IN', card, 'primary wide', () => this.renderAuth('in'));
+    btn('CREATE ACCOUNT', card, 'wide', () => this.renderAuth('up'));
+    btn('BACK', card, 'ghost wide', () => this.renderMenu());
+    return false;
+  }
+
   renderMenu() {
-    const body = this.screen('FRONTLINES', { sub: `Signed in as ${this.profile.username}` });
+    this.ensureProfile();
+    const signedIn = !!this.user;
+    const body = this.screen('FRONTLINES', {
+      back: () => this.renderFront(),
+      sub: signedIn ? `Signed in as ${this.profile.username}` : 'Playing as guest — sign in to play online',
+    });
     const grid = el('div', 'menu-grid', body);
 
-    const card = (title, desc, cls, onClick) => {
-      const c = el('button', `menu-card ${cls}`, grid);
+    const card = (title, desc, cls, onClick, lock = false) => {
+      const c = el('button', `menu-card ${cls}${lock ? ' locked' : ''}`, grid);
       el('h2', '', c, title);
       el('p', '', c, desc);
+      if (lock) el('span', 'lock-tag', c, 'ACCOUNT');
       c.addEventListener('click', () => { audio.ui('confirm'); onClick(); });
       return c;
     };
 
-    card('QUICK MATCH', 'Find a 5v5 ranked match', 'primary', () => this.renderQueue());
-    card('PRIVATE LOBBY', 'Create or join with a code', '', () => this.renderLobbyEntry());
-    card('TRAINING', 'Teahouse against bots, no account needed', '', () => {
+    card('QUICK MATCH', 'Find a 5v5 ranked match', 'primary', () => {
+      if (this.requireAccount('Quick Match')) this.renderQueue();
+    }, !signedIn);
+    card('PRIVATE LOBBY', 'Create or join with a six-character code', '', () => {
+      if (this.requireAccount('Private lobbies')) this.renderLobbyEntry();
+    }, !signedIn);
+    card('TRAINING', 'Teahouse against nine bots. No account needed.', '', () => {
       this.hide();
       this.onStartMatch?.({ offline: true, profile: this.profile });
     });
@@ -230,15 +268,21 @@ export class Shell {
 
     const foot = el('div', 'menu-foot', body);
     const st = this.profile.player_stats?.[0] ?? this.profile.player_stats ?? {};
-    el('span', '', foot, `Level ${this.profile.level}`);
-    el('span', '', foot, `MMR ${st.mmr ?? 2500}`);
-    el('span', '', foot, `K/D ${((st.kills ?? 0) / Math.max(1, st.deaths ?? 0)).toFixed(2)}`);
-    btn('SIGN OUT', foot, 'ghost small', async () => { await Net.signOut(); this.user = null; this.renderAuth(); });
+    el('span', '', foot, `Level ${this.profile.level ?? 1}`);
+    if (signedIn) {
+      el('span', '', foot, `MMR ${st.mmr ?? 2500}`);
+      el('span', '', foot, `K/D ${((st.kills ?? 0) / Math.max(1, st.deaths ?? 0)).toFixed(2)}`);
+      btn('SIGN OUT', foot, 'ghost small', async () => {
+        await Net.signOut(); this.user = null; this.profile = null; this.renderFront();
+      });
+    } else {
+      btn('SIGN IN', foot, 'ghost small', () => this.renderAuth('in'));
+    }
 
     // Banner preview, so the thing you customise is always in front of you.
     const bp = el('div', 'menu-banner', body);
     bp.appendChild(bannerCanvas(this.profile.banner ?? DEFAULT_BANNER, 380, 132, {
-      label: this.profile.username, level: this.profile.level,
+      label: this.profile.username, level: this.profile.level ?? 1,
     }));
   }
 
@@ -444,7 +488,7 @@ export class Shell {
       if (this.user) {
         try { await Net.updateProfile(this.user.id, { banner: b }); this.toast('Banner saved', 'good'); }
         catch (e) { this.toast(e.message, 'bad'); }
-      } else this.toast('Saved locally (offline)', 'good');
+      } else { this.saveGuest(); this.toast('Saved locally', 'good'); }
     });
   }
 
@@ -475,7 +519,7 @@ export class Shell {
       if (this.user) {
         try { await Net.updateProfile(this.user.id, { skins }); this.toast('Skins saved', 'good'); }
         catch (e) { this.toast(e.message, 'bad'); }
-      } else this.toast('Saved locally (offline)', 'good');
+      } else { this.saveGuest(); this.toast('Saved locally', 'good'); }
     });
   }
 
@@ -528,7 +572,7 @@ export class Shell {
       if (this.user) {
         try { await Net.updateProfile(this.user.id, { loadouts }); this.toast('Loadout saved', 'good'); }
         catch (e) { this.toast(e.message, 'bad'); }
-      } else this.toast('Saved locally (offline)', 'good');
+      } else { this.saveGuest(); this.toast('Saved locally', 'good'); }
     });
   }
 

@@ -110,6 +110,29 @@ function grounds(b) {
   // Stone approach path from the south gate to the genkan.
   b.box(-1, 0.02, 20, 4.5, 0.08, 12, 'stone', { texelScale: 0.5 });
 
+  // ---- outer boundary -----------------------------------------------------
+  // Attackers spawn outside the estate wall, so the playable area legitimately extends
+  // past it — but it has to stop somewhere. A tall bamboo screen closes the grounds so
+  // the edge of the map is a thing you can see rather than an invisible clamp you walk
+  // into. No openings: this is the hard edge.
+  const O = { x0: -34, x1: 34, z0: -30, z1: 30 };
+  const fence = (x1, z1, x2, z2) => {
+    b.wall(x1, z1, x2, z2, { mat: 'woodBeam', thick: 0.30, height: 5.2, base: 0, trim: false });
+    // Bamboo facing, so it reads as a screen rather than a slab.
+    const len = Math.hypot(x2 - x1, z2 - z1);
+    const ux = (x2 - x1) / len, uz = (z2 - z1) / len;
+    for (let d = 0.4; d < len; d += 0.42) {
+      const h = 4.6 + ((d * 7.3) % 1) * 0.8;
+      const geo = new THREE.CylinderGeometry(0.055, 0.065, h, 6);
+      geo.translate(x1 + ux * d, h / 2, z1 + uz * d);
+      b._push('bamboo', geo);
+    }
+  };
+  fence(O.x0, O.z0, O.x1, O.z0);
+  fence(O.x0, O.z1, O.x1, O.z1);
+  fence(O.x0, O.z0, O.x0, O.z1);
+  fence(O.x1, O.z0, O.x1, O.z1);
+
   // Torii gate on the south approach — a landmark for callouts, and hard cover.
   torii(b, -1, 22, 2.0);
 }

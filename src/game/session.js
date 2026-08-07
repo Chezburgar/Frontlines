@@ -17,6 +17,8 @@ import { BotBrain } from './bots.js';
 import { audio } from '../core/audio.js';
 import { surfaceOf } from '../world/materials.js';
 import { applySkin } from '../ui/banner.js';
+import { GadgetSystem, GADGETS, SIDE } from './gadgets.js';
+import { BuyMenu } from '../ui/buymenu.js';
 
 const DEFAULT_LOADOUT = {
   primary: { id: 'ar556', attach: { sight: 'holo', barrel: 'compensator', grip: 'vertical', under: 'none' } },
@@ -42,6 +44,10 @@ export class Session {
 
     this.match = new Match(this, {});
     this.match.on((ev) => this.onMatchEvent(ev));
+
+    this.gadgets = new GadgetSystem(this);
+    this.buy = new BuyMenu(document.getElementById('ui'), this);
+    this.flashAmount = 0;
 
     this.net = null;          // NetBridge, when online
     this.voice = null;        // VoiceChat, when online
@@ -138,6 +144,15 @@ export class Session {
     const w = this.weapon;
     if (w) w.update(dt);
 
+    // Buy menu is prep-only, and while it is open the player is frozen.
+    if (cmd.menu && this.buy.open) this.buy.close();
+    else if (this.buy.open) { this.updateHUD(cmd); return; }
+    if (this.match.phase === PHASE.PREP && cmd.voice === false) { /* reserved */ }
+    if (cmd.buyMenu && this.match.phase === PHASE.PREP) this.buy.toggle();
+
+    if (cmd.ping) this.dropPing();
+    this.handleGadgets(dt, cmd);
+
     if (this.match.phase === PHASE.ACTION || this.match.phase === PHASE.PLANTED
         || this.match.phase === PHASE.PREP) {
       this.handleWeapon(dt, cmd, w);
@@ -169,6 +184,19 @@ export class Session {
     audio.updateListener(this.app.camera);
     this.updateFootsteps(dt);
     this.updateBombAudio(dt);
+
+    this.gadgets.update(dt);
+    this.buy.tick();
+
+    // Flashbang whiteout decays; the renderer's grade drives the actual screen effect.
+    if (this.flashAmount > 0) {
+      this.flashAmount = Math.max(0, this.flashAmount - dt * 0.55);
+      this.app.renderer.grade.flash = this.flashAmount * 0.9;
+      this.hud.setFlash(this.flashAmount);
+    } else if (this.app.renderer.grade.flash) {
+      this.app.renderer.grade.flash = 0;
+      this.hud.setFlash(0);
+    }
 
     this.particles.update(dt);
     this.hitFeedback.t = Math.max(0, this.hitFeedback.t - dt);
@@ -352,6 +380,85 @@ export class Session {
     }
   }
 
+  /* ---------------------------------------------------------------- gadgets */
+
+  handleGadgets(dt, cmd) {
+    const local = this.local;
+    if (!local.gadgets?.length) return;
+    if (cmd.gadgetSlot >= 0 && cmd.gadgetSlot < local.gadgets.length) {
+      local.gadgetSlot = cmd.gadgetSlot;
+      audio.ui('tick');
+    }
+    const g = local.gadgets[local.gadgetSlot ?? 0];
+    if (!g || g.count <= 0) return;
+
+    // Throwables cook while held and release on the way up; placeables go on the surface
+    // you are looking at.
+    const cam = this.app.camera;
+    const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(cam.quaternion);
+
+    if (g.def.kind === 'throw') {
+      if (cmd.useGadget) {
+        this._cook = (this._cook ?? 0) + dt;
+      } else if (this._cook > 0) {
+        const power = Math.min(1, 0.45 + this._cook * 0.7);
+        this._cook = 0;
+        const origin = cam.position.clone().addScaledVector(dir, 0.4);
+        this.gadgets.throwGrenade(g.id, local, origin, dir, power);
+        g.count--;
+      }
+    } else if (g.def.kind === 'place' && cmd.useGadgetPressed) {
+      const hit = this.map.raycast(cam.position, dir, 2.6);
+      if (hit) {
+        // Breach charges only stick to something breachable.
+        if (g.id === 'breach' && !hit.piece?.reinforceable) {
+          this.hud.showBanner('CANNOT BREACH THIS SURFACE', '', 1200);
+          audio.ui('deny');
+          return;
+        }
+        this.gadgets.place(g.id, local, hit);
+        g.count--;
+      } else audio.ui('deny');
+    }
+  }
+
+  /** Flashbang whiteout for the local player. */
+  applyFlash(amount) {
+    this.flashAmount = Math.max(this.flashAmount, Math.min(1.6, amount));
+  }
+
+  /* ------------------------------------------------------------------ pings */
+
+  /**
+   * Marks whatever the player is looking at for the whole team.
+   * The ping is placed on the surface rather than at a fixed distance, so "that corner"
+   * and "that doorway" land where they were meant to.
+   */
+  dropPing() {
+    const cam = this.app.camera;
+    const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(cam.quaternion);
+    const hit = this.map.raycast(cam.position, dir, 90);
+    const point = hit ? hit.point.clone().addScaledVector(hit.normal, 0.15)
+      : cam.position.clone().addScaledVector(dir, 25);
+
+    // An enemy under the crosshair pings as a contact instead of a location.
+    let kind = 'mark';
+    let name = '';
+    for (const p of this.players.values()) {
+      if (!p.alive || p.team === this.local.team || p.local) continue;
+      const to = new THREE.Vector3(p.position.x, p.position.y + 1.2, p.position.z);
+      if (to.distanceTo(point) < 2.2) { kind = 'enemy'; name = 'CONTACT'; break; }
+    }
+    const room = this.map.roomAt(point);
+    if (kind === 'mark' && room) name = room.name.toUpperCase();
+
+    this.hud.addPing({ position: point, kind, name, team: this.local.team });
+    audio.ui('confirm');
+    this.net?.transport?.broadcastEvent({
+      t: 'ping', p: point.toArray().map((v) => +v.toFixed(2)), kind, name,
+    });
+  }
+
   /** Muzzle flash for a shot fired somewhere other than the local camera (bots). */
   flashAt(pos, dir, weaponDef) {
     this.particles.emit(pos.clone().addScaledVector(dir, 0.4), 3,
@@ -421,6 +528,11 @@ export class Session {
       hit: this.hitFeedback,
     });
     this.hud.renderScoreboard(this.match, this.players.values(), cmd.scoreboard);
+    this.hud.setGadgets(
+      (this.local.gadgets ?? []).map((g) => ({ name: g.def.name, count: g.count })),
+      this.local.gadgetSlot ?? 0);
+    this.hud.setScope(w?.def?.picked?.sight, this.app.player.ads);
+    this.hud.updatePings(this.app.camera, performance.now() / 1000);
   }
 
   /* ----------------------------------------------------------------- events */
@@ -439,16 +551,19 @@ export class Session {
           attackerTeam: this.match.sideOf[this.players.get(ev.attacker)?.team ?? 0],
         });
         break;
+      case 'bomb:planted':
+        // Spawn the physical charge so it can actually be found and defused.
+        this.gadgets.plantBomb(this.match.bomb.position);
+        break;
       case 'round:start':
+        this.gadgets.clear();
+        this.buy.resetForRound();
         this.hud.showBanner(`ROUND ${this.match.round}`,
           this.match.site ? this.match.site.name.toUpperCase() : '');
         this.impacts.clear();
         break;
       case 'phase:action':
         this.hud.showBanner('ACTION PHASE', '', 1800);
-        break;
-      case 'bomb:planted':
-        this.hud.showBanner('CHARGE PLANTED', '', 2200);
         break;
       case 'round:end': {
         const localSide = this.match.sideOf[this.local.team];

@@ -8,7 +8,54 @@
  * Everything reads from state each frame but only writes to the DOM when a value actually
  * changes — a per-frame textContent assignment on a dozen nodes is a measurable cost.
  */
+import * as THREE from 'three';
 import { PHASE, TEAM, WIN } from '../game/match.js';
+
+/**
+ * Scope sight pictures.
+ * Drawn as SVG so they stay razor sharp at any resolution and cost nothing to animate.
+ * The surround is an enormous stroked circle rather than a mask, which avoids a
+ * full-screen composite every frame.
+ */
+function scopeMarkup(kind) {
+  const surround = `<circle cx="50" cy="50" r="63" fill="none" stroke="#05070a" stroke-width="64"/>
+    <circle cx="50" cy="50" r="31.4" fill="none" stroke="#0b0e13" stroke-width="1.4"/>
+    <circle cx="50" cy="50" r="30.6" fill="none" stroke="rgba(150,170,190,.22)" stroke-width=".35"/>`;
+  const g = 'stroke="#0d0f12" stroke-width=".55" stroke-linecap="round"';
+  switch (kind) {
+    case 'chevron':
+      return `${surround}
+        <path d="M50 47.4 L52.4 51.6 L50 50.4 L47.6 51.6 Z" fill="#c8302a"/>
+        <line x1="50" y1="53" x2="50" y2="60" ${g}/>
+        <line x1="30" y1="50" x2="42" y2="50" ${g}/>
+        <line x1="58" y1="50" x2="70" y2="50" ${g}/>`;
+    case 'mildot': {
+      let dots = '';
+      for (let i = 1; i <= 4; i++) {
+        dots += `<circle cx="50" cy="${50 + i * 4.6}" r=".55" fill="#0d0f12"/>`;
+        dots += `<circle cx="${50 - i * 4.6}" cy="50" r=".55" fill="#0d0f12"/>`;
+        dots += `<circle cx="${50 + i * 4.6}" cy="50" r=".55" fill="#0d0f12"/>`;
+      }
+      return `${surround}
+        <line x1="50" y1="20" x2="50" y2="47" ${g}/>
+        <line x1="50" y1="53" x2="50" y2="80" ${g}/>
+        <line x1="20" y1="50" x2="47" y2="50" ${g}/>
+        <line x1="53" y1="50" x2="80" y2="50" ${g}/>
+        ${dots}<circle cx="50" cy="50" r=".7" fill="#c8302a"/>`;
+    }
+    case 'sniper':
+      return `${surround}
+        <line x1="50" y1="19" x2="50" y2="46" stroke="#0d0f12" stroke-width="1.1"/>
+        <line x1="50" y1="54" x2="50" y2="81" stroke="#0d0f12" stroke-width="1.1"/>
+        <line x1="19" y1="50" x2="46" y2="50" stroke="#0d0f12" stroke-width="1.1"/>
+        <line x1="54" y1="50" x2="81" y2="50" stroke="#0d0f12" stroke-width="1.1"/>
+        <line x1="46" y1="50" x2="54" y2="50" stroke="#0d0f12" stroke-width=".3"/>
+        <line x1="50" y1="46" x2="50" y2="54" stroke="#0d0f12" stroke-width=".3"/>
+        <circle cx="50" cy="50" r=".45" fill="#0d0f12"/>`;
+    default:
+      return surround;
+  }
+}
 
 const el = (tag, cls, parent, text) => {
   const n = document.createElement(tag);
@@ -81,8 +128,109 @@ export class HUD {
     // ---- scoreboard -------------------------------------------------------
     this.scoreboard = el('div', 'scoreboard', this.root);
 
+    // ---- scope overlay ----------------------------------------------------
+    // Magnified optics get a real sight picture: black surround, a lens circle, and a
+    // reticle drawn per optic. Without this a 2.5x is just a zoom number.
+    this.scope = el('div', 'scope', this.root);
+    this.scopeSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    this.scopeSvg.setAttribute('viewBox', '0 0 100 100');
+    this.scopeSvg.setAttribute('preserveAspectRatio', 'xMidYMid slice');
+    this.scope.appendChild(this.scopeSvg);
+
+    // ---- gadget / buy strip ----------------------------------------------
+    this.gadgetBar = el('div', 'gadget-bar', this.root);
+
+    // ---- ping markers -----------------------------------------------------
+    this.pingLayer = el('div', 'ping-layer', this.root);
+    this.pings = [];
+
+    // ---- flash whiteout ---------------------------------------------------
+    this.flash = el('div', 'flashout', this.root);
+
     // ---- round banner -----------------------------------------------------
     this.banner = el('div', 'banner', this.root);
+  }
+
+  /* ------------------------------------------------------------------ scope */
+
+  setScope(optic, blend) {
+    if (!optic?.scoped || blend < 0.55) {
+      this.scope.classList.remove('on');
+      this._scopeKind = null;
+      return;
+    }
+    this.scope.classList.add('on');
+    this.scope.style.opacity = String(Math.min(1, (blend - 0.55) / 0.3));
+    if (this._scopeKind === optic.reticle) return;
+    this._scopeKind = optic.reticle;
+    this.scopeSvg.innerHTML = scopeMarkup(optic.reticle);
+  }
+
+  /* ------------------------------------------------------------------ pings */
+
+  /**
+   * A world-space ping. Projected each frame so it tracks the point it marks, and
+   * clamped to the screen edge with an arrow when it is off-view — a ping you cannot
+   * see is not intel.
+   */
+  addPing({ position, kind = 'mark', name = '', team = 0 }) {
+    const node = el('div', `ping ${kind}`, this.pingLayer);
+    el('i', '', node);
+    if (name) el('span', '', node, name);
+    const p = { node, position, born: performance.now() / 1000, kind };
+    this.pings.push(p);
+    while (this.pings.length > 8) { this.pings.shift().node.remove(); }
+    return p;
+  }
+
+  updatePings(camera, now) {
+    if (!this.pings.length) return;
+    const v = new THREE.Vector3();
+    const w = window.innerWidth, h = window.innerHeight;
+    for (let i = this.pings.length - 1; i >= 0; i--) {
+      const p = this.pings[i];
+      const age = now - p.born;
+      if (age > 7) { p.node.remove(); this.pings.splice(i, 1); continue; }
+      p.node.style.opacity = String(Math.min(1, (7 - age) / 1.2));
+
+      v.copy(p.position).project(camera);
+      const behind = v.z > 1;
+      let x = (v.x * 0.5 + 0.5) * w;
+      let y = (-v.y * 0.5 + 0.5) * h;
+      if (behind) { x = w - x; y = h - y; }
+
+      const edge = behind || x < 24 || x > w - 24 || y < 24 || y > h - 24;
+      if (edge) {
+        // Clamp to a margin and point at it.
+        const cx = w / 2, cy = h / 2;
+        const dx = x - cx, dy = y - cy;
+        const scale = Math.min((w / 2 - 40) / Math.max(1, Math.abs(dx)),
+                               (h / 2 - 40) / Math.max(1, Math.abs(dy)));
+        x = cx + dx * scale; y = cy + dy * scale;
+      }
+      p.node.classList.toggle('edge', edge);
+      p.node.style.transform = `translate(${Math.round(x)}px, ${Math.round(y)}px)`;
+    }
+  }
+
+  /* ------------------------------------------------------------- gadget bar */
+
+  setGadgets(entries, activeIndex) {
+    const sig = entries.map((e) => `${e.name}:${e.count}`).join('|') + `#${activeIndex}`;
+    if (this._gadgetSig === sig) return;
+    this._gadgetSig = sig;
+    this.gadgetBar.innerHTML = '';
+    entries.forEach((e, i) => {
+      const n = el('div', `gslot${i === activeIndex ? ' on' : ''}${e.count <= 0 ? ' empty' : ''}`, this.gadgetBar);
+      el('b', '', n, String(i + 3));
+      el('span', '', n, e.name);
+      el('u', '', n, `x${e.count}`);
+    });
+  }
+
+  /** Flashbang whiteout, driven from the gadget system. */
+  setFlash(amount) {
+    this.flash.style.opacity = String(Math.min(1, amount));
   }
 
   /** Writes only when the value changed. */

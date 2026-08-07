@@ -27,8 +27,12 @@ const MAX_SLOPE_COS = Math.cos(THREE.MathUtils.degToRad(52));
 const SPRINT_MULT = 1.52;
 const ADS_MULT = 0.52;
 
-/** Playable bounds. Beyond the grounds slab there is nothing to stand on. */
-const BOUNDS = { x: 41, z: 37, yMin: -4, yMax: 40 };
+/**
+ * Playable bounds — a backstop just inside the bamboo boundary screen, which is the real
+ * barrier. This only catches a player who somehow gets past it rather than being the
+ * thing they walk into.
+ */
+const BOUNDS = { x: 33.4, z: 29.4, yMin: -4, yMax: 40 };
 
 export class PlayerController {
   constructor(map, camera, input) {
@@ -82,13 +86,46 @@ export class PlayerController {
     this.stance = next;
   }
 
+  /**
+   * Is there room to adopt this stance without ending up inside geometry?
+   *
+   * Only the volume the taller stance would newly occupy is tested — the space the player
+   * already fills is by definition clear, and testing the whole capsule would report a
+   * collision against the floor they are standing on.
+   */
   _fits(stance) {
-    const prev = this.stance;
-    this.stance = stance;
-    const seg = this.capsule(new THREE.Line3());
-    const hit = this._sweep(seg, this.def.radius, true);
-    this.stance = prev;
-    return !hit;
+    const bvh = this.map?.bvh;
+    if (!bvh) return true;
+    const target = STANCE_DEF[stance];
+    const cur = this.def;
+    if (target.height <= cur.height) return true;
+
+    const radius = target.radius;
+    const seg = new THREE.Line3();
+    // From the top of the current capsule to the top of the taller one.
+    seg.start.set(this.position.x, this.position.y + Math.max(cur.height - radius, radius), this.position.z);
+    seg.end.set(this.position.x, this.position.y + target.height - radius, this.position.z);
+    if (seg.end.y <= seg.start.y) return true;
+
+    const box = new THREE.Box3();
+    box.expandByPoint(seg.start);
+    box.expandByPoint(seg.end);
+    box.min.addScalar(-radius);
+    box.max.addScalar(radius);
+
+    let blocked = false;
+    const triPoint = new THREE.Vector3(), capPoint = new THREE.Vector3();
+    bvh.shapecast({
+      intersectsBounds: (b) => b.intersectsBox(box),
+      intersectsTriangle: (tri) => {
+        if (tri.closestPointToSegment(seg, triPoint, capPoint) < radius) {
+          blocked = true;
+          return true;    // stop traversal
+        }
+        return false;
+      },
+    });
+    return !blocked;
   }
 
   update(dt, cmd) {
