@@ -454,8 +454,20 @@ export class Session {
         this.afterGadgetUse(g);
       }
     } else if (g.def.kind === 'place' && cmd.firePressed) {
-      const hit = this.map.raycast(cam.position, dir, 2.8);
-      if (!hit) { this.hud.showBanner('NOTHING TO PLACE ON', '', 1000); audio.ui('deny'); return; }
+      // Wall gadgets go where you are looking; floor gadgets (wire, shields, mines) fall
+      // back to the ground in front of you. Requiring a forward ray to hit something was
+      // why barbed wire and most of the defender kit appeared to do nothing at all —
+      // looking across a room hits nothing within reach.
+      const wallMounted = g.id === 'breach' || g.id === 'camera';
+      let hit = this.map.raycast(cam.position, dir, 2.8);
+      if ((!hit || !wallMounted) && !wallMounted) {
+        const ahead = this.app.player.position.clone()
+          .addScaledVector(new THREE.Vector3(dir.x, 0, dir.z).normalize(), 1.1);
+        ahead.y += 1.2;
+        const ground = this.map.raycast(ahead, DOWN_V, 3.0);
+        if (ground) hit = ground;
+      }
+      if (!hit) { this.hud.showBanner('NO SURFACE IN REACH', '', 1000); audio.ui('deny'); return; }
       if (g.id === 'breach' && !hit.piece?.reinforceable) {
         this.hud.showBanner('CANNOT BREACH THIS SURFACE', '', 1200);
         audio.ui('deny');
@@ -665,16 +677,35 @@ export class Session {
       }
     }
 
-    // Plant / defuse.
-    if (m.phase === PHASE.ACTION && p.hasBomb && m.inSite(ctrl.position)) {
-      this.prompt = cmd.interactHeld ? '' : '[HOLD F] PLANT CHARGE';
-      m.tryPlant(p, dt, cmd.interactHeld);
+    // Pick the loose charge up.
+    const loose = m.looseBomb;
+    if (m.phase === PHASE.ACTION && loose && m.sideOf[p.team] === TEAM.ATTACK) {
+      const d = Math.hypot(ctrl.position.x - loose.x, ctrl.position.z - loose.z);
+      if (d < 1.6 && Math.abs(ctrl.position.y - loose.y) < 2.2) {
+        this.prompt = '[F] TAKE THE CHARGE';
+        if (cmd.interact) m.pickUpBomb(p);
+        return;
+      }
+    }
+
+    // Plant / defuse. Every failure states its reason — a hold that silently does
+    // nothing is indistinguishable from the game being broken.
+    if (m.phase === PHASE.ACTION && p.hasBomb) {
+      if (m.inSite(ctrl.position)) {
+        this.prompt = cmd.interactHeld ? '' : '[HOLD F] PLANT CHARGE';
+        m.tryPlant(p, dt, cmd.interactHeld);
+      } else {
+        this.prompt = `CARRY THE CHARGE TO ${m.site?.name?.toUpperCase() ?? 'THE SITE'}`;
+        if (cmd.interactHeld) this.prompt = 'NOT INSIDE THE OBJECTIVE AREA';
+      }
+    } else if (m.phase === PHASE.ACTION && m.sideOf[p.team] === TEAM.ATTACK && cmd.interactHeld) {
+      const who = m.bomb.carrier ? this.players.get(m.bomb.carrier)?.name : null;
+      this.prompt = who ? `${who} IS CARRYING THE CHARGE` : 'THE CHARGE IS AT SPAWN';
     } else if (m.phase === PHASE.PLANTED && m.sideOf[p.team] === TEAM.DEFEND) {
       const near = m.bomb.position && ctrl.position.distanceTo(m.bomb.position) < 1.6;
       if (near) this.prompt = cmd.interactHeld ? '' : '[HOLD F] DEFUSE';
+      else if (cmd.interactHeld) this.prompt = 'MOVE TO THE CHARGE';
       m.tryDefuse(p, dt, cmd.interactHeld);
-    } else if (m.phase === PHASE.ACTION && p.hasBomb) {
-      this.prompt = `CARRY THE CHARGE TO ${m.site?.name?.toUpperCase() ?? 'THE SITE'}`;
     }
   }
 
@@ -733,6 +764,15 @@ export class Session {
           attackerTeam: this.match.sideOf[this.players.get(ev.attacker)?.team ?? 0],
         });
         break;
+      case 'bomb:dropped':
+        // Show the loose charge so it can actually be found and collected.
+        if (ev.position) this.gadgets.dropBomb(new THREE.Vector3(...ev.position));
+        break;
+      case 'bomb:taken':
+        this.gadgets.clearLooseBomb();
+        this.hud.showBanner(ev.player === this.local.id ? 'YOU HAVE THE CHARGE'
+          : `${ev.name} HAS THE CHARGE`, '', 1800);
+        break;
       case 'bomb:planted':
         // Spawn the physical charge so it can actually be found and defused.
         this.gadgets.plantBomb(this.match.bomb.position);
@@ -748,8 +788,7 @@ export class Session {
         this.hud.showBanner('ACTION PHASE', '', 1800);
         break;
       case 'round:end': {
-        const localSide = this.match.sideOf[this.local.team];
-        const won = ev.winner === localSide;
+        const won = ev.winningTeam === this.local.team;
         const why = { [WIN.ELIMINATION]: 'ENEMY TEAM ELIMINATED', [WIN.DETONATION]: 'CHARGE DETONATED',
                       [WIN.DEFUSE]: 'CHARGE DEFUSED', [WIN.TIME]: 'TIME EXPIRED' }[ev.reason] ?? '';
         this.hud.showBanner(won ? 'ROUND WON' : 'ROUND LOST', why, 4200);
@@ -757,8 +796,8 @@ export class Session {
       }
       case 'match:end':
         this.hud.showBanner(
-          ev.winner === this.match.sideOf[this.local.team] ? 'VICTORY' : 'DEFEAT',
-          `${ev.score[TEAM.ATTACK]} — ${ev.score[TEAM.DEFEND]}`, 9000);
+          ev.winningTeam === this.local.team ? 'VICTORY' : 'DEFEAT',
+          `${ev.score[0]} — ${ev.score[1]}`, 9000);
         break;
       default: break;
     }

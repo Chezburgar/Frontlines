@@ -121,20 +121,60 @@ export class Match {
     p.spawnRoom = group?.name ?? '';
   }
 
-  /** Gives the bomb to one attacker at round start. */
+  /**
+   * Drops the charge at the attackers' spawn as a physical object.
+   *
+   * It is not silently handed to whoever happens to be first in the player list — one
+   * attacker has to walk over and pick it up, and only that carrier can plant. Making it
+   * a real object also means it can be dropped, seen and recovered when the carrier dies.
+   */
   assignBomb() {
     const attackers = [...this.world.players.values()]
       .filter((p) => this.sideOf[p.team] === TEAM.ATTACK && p.alive);
     if (!attackers.length) return;
-    attackers[0].hasBomb = true;
-    this.emit('bomb:assigned', { player: attackers[0].id });
+
+    // Spawn it at the middle of the attack spawn group, on the ground.
+    const group = this.world.map.spawns.attack[0];
+    const pt = group?.points?.[0] ?? { x: 0, y: 0, z: 24 };
+    this.bomb.carrier = null;
+    this.bomb.dropped = { x: pt.x, y: pt.y, z: pt.z };
+    for (const p of attackers) p.hasBomb = false;
+    this.emit('bomb:dropped', { position: [pt.x, pt.y, pt.z], atSpawn: true });
+
+    // Bots will not walk a pickup errand, so if no human takes it within the first few
+    // seconds of the action phase a bot claims it and the round can still progress.
+    this._botClaimIn = 8;
   }
+
+  /** Hands the charge to a player standing on it. */
+  pickUpBomb(player) {
+    if (!this.bomb.dropped || this.bomb.carrier) return false;
+    if (this.sideOf[player.team] !== TEAM.ATTACK || !player.alive) return false;
+    this.bomb.dropped = null;
+    this.bomb.carrier = player.id;
+    player.hasBomb = true;
+    this.emit('bomb:taken', { player: player.id, name: player.name });
+    return true;
+  }
+
+  /** Where the loose charge is, or null if someone is carrying it. */
+  get looseBomb() { return this.bomb.planted ? null : this.bomb.dropped; }
 
   /* ------------------------------------------------------------------ tick */
 
   update(dt) {
     if (this.phase === PHASE.MATCH_OVER) return;
     this.phaseTime -= dt;
+
+    // Fallback so a bot-only attack still plays the objective out.
+    if (this._botClaimIn > 0 && this.bomb.dropped && !this.bomb.carrier) {
+      this._botClaimIn -= dt;
+      if (this._botClaimIn <= 0) {
+        const bot = [...this.world.players.values()]
+          .find((p) => p.bot && this.sideOf[p.team] === TEAM.ATTACK && p.alive);
+        if (bot) this.pickUpBomb(bot);
+      }
+    }
 
     if (this.phase === PHASE.PLANTED) this.updateDefuse(dt);
     else if (this.phase === PHASE.ACTION) this.updatePlant(dt);
@@ -187,17 +227,25 @@ export class Match {
     if (this.phase === PHASE.ENDED || this.phase === PHASE.MATCH_OVER) return;
     this.phase = PHASE.ENDED;
     this.phaseTime = this.rules.endSeconds;
-    this.score[winningSide]++;
-    this.roundHistory.push({ round: this.round, winner: winningSide, reason, site: this.site?.id });
-    this.emit('round:end', { winner: winningSide, reason, score: { ...this.score } });
+
+    // Credit the TEAM that was playing that side this round. Scoring by side meant that
+    // after the swap a team's wins started accruing to their opponents' column.
+    const winningTeam = this.sideOf[0] === winningSide ? 0 : 1;
+    this.score[winningTeam]++;
+    this.roundHistory.push({
+      round: this.round, winner: winningSide, winningTeam, reason, site: this.site?.id,
+    });
+    this.emit('round:end', {
+      winner: winningSide, winningTeam, reason, score: { ...this.score },
+    });
   }
 
   nextRoundOrEnd() {
     const need = this.rules.roundsToWin;
-    const a = this.score[TEAM.ATTACK], d = this.score[TEAM.DEFEND];
+    const a = this.score[0], d = this.score[1];
     if (a >= need || d >= need) {
       this.phase = PHASE.MATCH_OVER;
-      this.emit('match:end', { winner: a > d ? TEAM.ATTACK : TEAM.DEFEND, score: { ...this.score } });
+      this.emit('match:end', { winningTeam: a > d ? 0 : 1, score: { ...this.score } });
     } else {
       this.startRound();
     }

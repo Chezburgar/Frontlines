@@ -296,7 +296,25 @@ export class GadgetSystem {
     return this.bomb;
   }
 
+  /** The loose charge, sitting on the ground waiting to be collected. */
+  dropBomb(position) {
+    this.clearLooseBomb();
+    this.loose = buildModel('bomb');
+    this.loose.position.copy(position);
+    this.loose.scale.setScalar(0.8);
+    this.group.add(this.loose);
+    this.looseLight = new THREE.PointLight(0xffb040, 2.4, 6, 2);
+    this.looseLight.position.copy(position).add(new THREE.Vector3(0, 0.4, 0));
+    this.group.add(this.looseLight);
+  }
+
+  clearLooseBomb() {
+    if (this.loose) { this.loose.removeFromParent(); this.loose = null; }
+    if (this.looseLight) { this.looseLight.removeFromParent(); this.looseLight = null; }
+  }
+
   clearBomb() {
+    this.clearLooseBomb();
     if (this.bomb) { this.bomb.removeFromParent(); this.bomb = null; }
     if (this.bombLight) { this.bombLight.removeFromParent(); this.bombLight = null; }
   }
