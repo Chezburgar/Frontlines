@@ -19,11 +19,32 @@ export const supabase = createClient(URL, ANON, {
 
 /* ------------------------------------------------------------------- account */
 
+/**
+ * Creates an account and signs straight in.
+ *
+ * If the project still has email confirmation switched on, signUp returns a user with no
+ * session and the player is stranded on a "check your email" message. Rather than depend
+ * on a dashboard setting, this immediately signs in with the same credentials when no
+ * session came back — so the flow is the same either way.
+ */
 export async function signUp(email, password, username) {
   const { data, error } = await supabase.auth.signUp({
     email, password, options: { data: { username } },
   });
   if (error) throw error;
+
+  if (!data.session) {
+    const { data: signedIn, error: sErr } = await supabase.auth.signInWithPassword({ email, password });
+    if (sErr) {
+      // Only surface the confirmation requirement if signing in genuinely cannot proceed.
+      if (/confirm/i.test(sErr.message)) {
+        throw new Error('This project still requires email confirmation. '
+          + 'Turn off "Confirm email" in Supabase → Authentication → Sign In / Providers.');
+      }
+      throw sErr;
+    }
+    return signedIn;
+  }
   return data;
 }
 

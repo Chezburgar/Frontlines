@@ -1,0 +1,41 @@
+name: Deploy Spectator
+
+# The spectator ships to its own repository so it has a separate URL and can be updated
+# without touching the players' build.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'spectator/**'
+      - 'src/**'
+      - 'vite.spectator.config.js'
+      - '.github/workflows/deploy-spectator.yml'
+  workflow_dispatch:
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npx vite build --config vite.spectator.config.js
+        env:
+          FL_SPEC_BASE: /Frontlines-Spectator/
+      - name: Publish to the spectator repository
+        env:
+          GH_TOKEN: ${{ secrets.SPECTATOR_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          cd dist-spectator
+          touch .nojekyll
+          git init -b gh-pages
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add -A
+          git commit -m "Spectator build ${GITHUB_SHA::7}"
+          git push --force \
+            "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY_OWNER}/Frontlines-Spectator.git" \
+            gh-pages

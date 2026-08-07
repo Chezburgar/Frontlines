@@ -31,6 +31,7 @@ export class BuyMenu {
     this.open = false;
     this.budget = START_BUDGET;
     this.selection = { gadgets: {}, primary: null, secondary: null };
+    this.attach = { primary: null, secondary: null };
     this._onClose = null;
   }
 
@@ -139,8 +140,47 @@ export class BuyMenu {
       el('span', 'wn', row, w.name);
       el('span', 'wc', row, w.class);
       el('span', 'wd', row, `${w.damage[0][1]} dmg · ${w.rpm} rpm`);
-      row.onclick = () => { this.selection[key] = id; audio.ui('tick'); this.render(); };
+      row.onclick = () => {
+        this.selection[key] = id;
+        // Reset attachments when the weapon changes; the old ones may not fit.
+        this.attach[key] = null;
+        audio.ui('tick');
+        this.render();
+      };
     }
+
+    // Attachments for whatever is selected, including optics — buying a scope has to be
+    // possible here, not only from the out-of-match loadout screen.
+    const wid = current;
+    const w = WEAPONS[wid];
+    if (!w?.attachments) return;
+    const chosen = this.attachFor(key, wid);
+    const grid = el('div', 'attach-grid compact', parent);
+    for (const [cat, options] of Object.entries(w.attachments)) {
+      if (options.length <= 1) continue;
+      const row = el('label', 'field', grid);
+      el('span', '', row, cat.toUpperCase());
+      const sel = el('select', '', row);
+      for (const optId of options) {
+        const o = el('option', '', sel, ATTACHMENTS[cat][optId].name);
+        o.value = optId;
+        if (chosen[cat] === optId) o.selected = true;
+      }
+      sel.onchange = () => {
+        chosen[cat] = sel.value;
+        this.attach[key] = chosen;
+        audio.ui('tick');
+      };
+    }
+  }
+
+  /** Current attachment choice for a slot, defaulting from the equipped loadout. */
+  attachFor(key, weaponId) {
+    if (this.attach[key]) return this.attach[key];
+    const equipped = this.s.local.loadout?.[key];
+    const base = equipped?.id === weaponId ? { ...equipped.attach } : defaultAttach(weaponId);
+    this.attach[key] = base;
+    return base;
   }
 
   flashBudget() {
@@ -164,11 +204,9 @@ export class BuyMenu {
     const local = this.s.local;
     // Weapons.
     const lo = JSON.parse(JSON.stringify(local.loadout));
-    if (this.selection.primary && this.selection.primary !== lo.primary.id) {
-      lo.primary = { id: this.selection.primary, attach: defaultAttach(this.selection.primary) };
-    }
-    if (this.selection.secondary && this.selection.secondary !== lo.secondary.id) {
-      lo.secondary = { id: this.selection.secondary, attach: defaultAttach(this.selection.secondary) };
+    for (const key of ['primary', 'secondary']) {
+      const id = this.selection[key] ?? lo[key].id;
+      lo[key] = { id, attach: this.attach[key] ?? lo[key].attach ?? defaultAttach(id) };
     }
     this.s.equip(local, lo);
 
@@ -183,6 +221,7 @@ export class BuyMenu {
   resetForRound() {
     this.budget = START_BUDGET;
     this.selection = { gadgets: {}, primary: null, secondary: null };
+    this.attach = { primary: null, secondary: null };
     // A sensible default so a player who never opens the menu is not empty-handed.
     const defaults = this.side === SIDE.ATTACK ? ['frag', 'breach'] : ['barbed', 'nitro'];
     for (const id of defaults) {

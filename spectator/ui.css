@@ -1,0 +1,130 @@
+/* Spectator interface: operator chrome plus the broadcast overlay. */
+
+.spec-overlay { position: absolute; inset: 0; pointer-events: none; }
+
+/* -------------------------------------------------------------------- top bar */
+.spec-top {
+  position: absolute; top: 18px; left: 50%; transform: translateX(-50%);
+  display: grid; grid-template-columns: 72px 170px 72px; align-items: center;
+  text-align: center; gap: 0 14px;
+  background: rgba(7,9,13,.55); padding: 8px 18px; border: 1px solid var(--line);
+}
+.spec-top .sc { font-size: 36px; font-weight: 700; line-height: 1; }
+.spec-top .sc.atk { color: var(--atk); }
+.spec-top .sc.def { color: var(--def); }
+.spec-top .time { font-family: var(--mono); font-size: 28px; font-weight: 600; }
+.spec-top .ph { font-size: 10px; letter-spacing: .28em; color: var(--text-mute); margin-top: 3px; }
+
+/* ------------------------------------------------------------------ killfeed */
+.spec-killfeed { position: absolute; top: 18px; right: 24px; display: flex; flex-direction: column; gap: 4px; }
+.spec-killfeed .kf {
+  display: flex; gap: 9px; align-items: center; font-size: 14px;
+  background: rgba(7,9,13,.62); padding: 5px 11px; border-right: 2px solid var(--line-2);
+}
+.spec-killfeed .kf .a { color: var(--atk); }
+.spec-killfeed .kf .v { color: var(--text-dim); }
+.spec-killfeed .kf .i { opacity: .85; }
+
+/* ---------------------------------------------------------------- nameplates */
+.spec-plates { position: absolute; inset: 0; }
+.plate {
+  position: absolute; left: 0; top: 0; margin: -26px 0 0 0;
+  transform-origin: center; white-space: nowrap;
+  font-size: 12px; letter-spacing: .10em; padding: 2px 7px;
+  background: rgba(7,9,13,.66); border-bottom: 2px solid var(--line-2);
+  translate: -50% 0;
+}
+.plate.atk { border-bottom-color: var(--atk); color: #ffd9cd; }
+.plate.def { border-bottom-color: var(--def); color: #cfe4f7; }
+.plate.focus { outline: 1px solid var(--accent-2); }
+
+/* ------------------------------------------------------------------- roster */
+.spec-roster {
+  position: absolute; left: 24px; top: 50%; transform: translateY(-50%);
+  display: flex; gap: 10px;
+}
+.rcol { display: flex; flex-direction: column; gap: 3px; min-width: 132px; }
+.rrow {
+  display: flex; justify-content: space-between; gap: 10px;
+  background: rgba(7,9,13,.58); padding: 4px 9px; font-size: 13px;
+  border-left: 2px solid var(--line-2);
+}
+.rcol.atk .rrow { border-left-color: var(--atk); }
+.rcol.def .rrow { border-left-color: var(--def); }
+.rrow.dead { opacity: .35; }
+.rrow .hp { font-family: var(--mono); color: var(--text-dim); }
+
+/* ----------------------------------------------------------------- controls */
+.spec-controls {
+  position: absolute; right: 20px; bottom: 20px; width: 264px;
+  background: rgba(13,16,23,.92); border: 1px solid var(--line-2); padding: 16px 18px;
+}
+.spec-controls h2 { font-size: 13px; letter-spacing: .26em; margin-bottom: 12px; color: var(--accent-2); }
+.spec-controls h3 { font-size: 10px; letter-spacing: .24em; color: var(--text-mute); margin: 14px 0 7px; }
+.spec-controls .row { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+.spec-controls .lbl { font-size: 10px; letter-spacing: .18em; color: var(--text-mute); width: 54px; }
+.cbtn {
+  font-family: var(--font); font-size: 11px; letter-spacing: .14em; padding: 5px 9px;
+  background: var(--panel-2); border: 1px solid var(--line-2); color: var(--text-dim);
+  cursor: pointer; transition: .12s;
+}
+.cbtn:hover { border-color: var(--accent); color: var(--accent-2); }
+.cbtn.on { background: var(--accent); border-color: var(--accent); color: #14100b; }
+.cbtn.primary { background: var(--accent); border-color: var(--accent); color: #14100b; }
+.cbtn.rec.on { background: var(--rec); border-color: var(--rec); color: #fff; }
+.tname { flex: 1; text-align: center; font-size: 12px; letter-spacing: .08em; }
+.rt { font-family: var(--mono); font-size: 12px; color: var(--rec); }
+.toggles { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 10px; }
+.tg { display: flex; align-items: center; gap: 6px; font-size: 10px; letter-spacing: .12em; color: var(--text-dim); cursor: pointer; }
+.spec-controls .hint { font-size: 10px; line-height: 1.55; color: var(--text-mute); margin-top: 10px; }
+.spec-controls .hint.keys { font-family: var(--mono); letter-spacing: 0; }
+
+/* --------------------------------------------------------------------- gate */
+.spec-gate {
+  position: absolute; inset: 0; display: none; place-items: center;
+  background: radial-gradient(120% 90% at 50% 10%, rgba(19,23,34,.9), rgba(7,9,13,.97));
+}
+.gate-card {
+  width: min(560px, 90vw); background: rgba(13,16,23,.96);
+  border: 1px solid var(--line-2); padding: 32px 34px;
+}
+.gate-card.wide { width: min(760px, 92vw); }
+.gate-card h1 { font-size: 30px; letter-spacing: .24em; margin-bottom: 14px; }
+.gate-card p { font-size: 14px; line-height: 1.65; color: var(--text-dim); margin-bottom: 10px; }
+.gate-card p.dim { color: var(--text-mute); font-size: 12px; }
+.gate-card p.err { color: var(--bad); font-size: 13px; }
+.gate-form { display: flex; flex-direction: column; gap: 9px; margin: 16px 0; }
+.gate-form input {
+  background: #0c0f16; border: 1px solid var(--line-2); color: var(--text);
+  padding: 10px 12px; font-family: var(--font); font-size: 15px;
+}
+.gate-form input:focus { outline: none; border-color: var(--accent); }
+
+.match-list { display: flex; flex-direction: column; gap: 6px; margin: 16px 0; max-height: 46vh; overflow: auto; }
+.match-row {
+  display: grid; grid-template-columns: 1fr auto auto auto; gap: 14px; align-items: center;
+  background: rgba(0,0,0,.3); border: 1px solid var(--line); padding: 11px 14px;
+  color: var(--text); font-family: var(--font); font-size: 13px; letter-spacing: .1em; cursor: pointer;
+}
+.match-row:hover:not(:disabled) { border-color: var(--accent); }
+.match-row:disabled { opacity: .4; cursor: default; }
+.match-row .ms, .match-row .mp { color: var(--text-mute); font-size: 11px; }
+.match-row .mt { font-size: 10px; letter-spacing: .18em; color: var(--good); }
+
+/* -------------------------------------------------------------- flash / load */
+.spec-flash {
+  position: absolute; left: 50%; top: 20%; transform: translate(-50%, -6px);
+  font-size: 15px; letter-spacing: .28em; color: var(--accent-2);
+  background: rgba(7,9,13,.7); padding: 8px 18px;
+  opacity: 0; transition: .25s; pointer-events: none;
+}
+.spec-flash.show { opacity: 1; transform: translate(-50%, 0); }
+
+.spec-loading {
+  position: absolute; inset: 0; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 16px; background: var(--bg);
+}
+.spec-loading .lb { font-size: 34px; font-weight: 700; letter-spacing: .3em; }
+.spec-loading .ls { font-size: 12px; letter-spacing: .22em; color: var(--text-mute); }
+.spec-loading .lbar { width: min(420px, 70vw); height: 3px; background: var(--line); }
+.spec-loading .lbar i { display: block; height: 100%; background: var(--accent); transition: width .2s; }

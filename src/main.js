@@ -43,13 +43,37 @@ const TIPS = [
   'The bomb timer beats the round timer. Plant early, hold the angle.',
 ];
 
+/**
+ * Errors that are expected, recoverable and none of the player's business.
+ *
+ * Pointer lock is the main one: browsers rate-limit re-acquiring it right after the user
+ * exits, so pressing Escape and clicking again throws. That is a normal thing to do, and
+ * showing a full-screen SYSTEM FAULT for it is far worse than the problem.
+ */
+const BENIGN = [
+  /pointer lock/i,
+  /request.*not allowed by the user agent/i,
+  /play\(\) request was interrupted/i,
+  /The play method is not allowed/i,
+  /AudioContext was not allowed to start/i,
+];
+
+const isBenign = (err) => {
+  const msg = (err && (err.message || err.name)) || String(err ?? '');
+  return BENIGN.some((re) => re.test(msg));
+};
+
 function fatal(err) {
+  if (isBenign(err)) { console.warn('[recovered]', err?.message ?? err); return; }
   console.error(err);
   el.fatal.style.display = 'block';
   el.fatalmsg.textContent = (err && (err.stack || err.message)) || String(err);
 }
 window.addEventListener('error', (e) => fatal(e.error || e.message));
-window.addEventListener('unhandledrejection', (e) => fatal(e.reason));
+window.addEventListener('unhandledrejection', (e) => {
+  if (isBenign(e.reason)) { e.preventDefault(); console.warn('[recovered]', e.reason?.message); return; }
+  fatal(e.reason);
+});
 
 function setProgress(p, status) {
   el.loadbar.style.width = `${Math.round(p * 100)}%`;

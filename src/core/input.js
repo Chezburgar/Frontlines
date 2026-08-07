@@ -205,7 +205,33 @@ export class Input {
     };
   }
 
-  requestLock() { this.canvas.requestPointerLock?.(); }
+  /**
+   * Acquires pointer lock, retrying if the browser refuses.
+   *
+   * Browsers rate-limit re-acquiring the lock immediately after the user exits it, and
+   * reject the promise. Pressing Escape and clicking straight back in is completely
+   * normal, so this swallows the rejection and retries shortly after rather than letting
+   * it surface as an error.
+   */
+  requestLock() {
+    if (this.locked || this._lockPending) return;
+    this._lockPending = true;
+    const attempt = (retriesLeft) => {
+      let p;
+      try { p = this.canvas.requestPointerLock?.(); }
+      catch { p = null; }
+      const done = () => { this._lockPending = false; };
+      const fail = () => {
+        if (retriesLeft > 0) setTimeout(() => attempt(retriesLeft - 1), 350);
+        else done();
+      };
+      // Older browsers return undefined rather than a promise.
+      if (p && typeof p.then === 'function') p.then(done, fail);
+      else setTimeout(() => { this.locked ? done() : fail(); }, 120);
+    };
+    attempt(3);
+  }
+
   releaseLock() { if (this.locked) document.exitPointerLock?.(); }
 
   /* ---------------------------------------------------------------- query */
