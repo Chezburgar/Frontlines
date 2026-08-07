@@ -201,6 +201,7 @@ export class Session {
     this.updateFootsteps(dt);
     this.updateBombAudio(dt);
 
+    this.updateZoom(dt);
     this.gadgets.update(dt);
     this.buy.tick();
 
@@ -254,6 +255,15 @@ export class Session {
     if (ctrl.sprinting) return;
     // The fire button throws the equipped gadget instead of firing the weapon.
     if (this.local.holdingGadget) return;
+    // Preparation is not a fight. The spawn barrier only stops movement, not bullets, so
+    // without this attackers could shoot defenders through it before the round began.
+    if (this.match.phase === PHASE.PREP) {
+      if (cmd.firePressed) {
+        this.hud.showBanner('WEAPONS HOLD', 'Preparation phase', 1100);
+        audio.ui('deny');
+      }
+      return;
+    }
 
     const now = performance.now() / 1000;
     if (w.tryFire(now, cmd.fire, cmd.firePressed)) this.fire(w);
@@ -608,6 +618,36 @@ export class Session {
     this._objPing = this.hud.addPing({ position: point, kind: 'objective', name: label });
   }
 
+  /**
+   * Actual optical magnification.
+   *
+   * The viewmodel camera narrowed its FOV on ADS but the *world* camera never did, so a
+   * 2.5x scope drew a scope overlay over an unmagnified image — the optic was decoration.
+   * The world FOV now divides by the optic's zoom, which is what magnification is.
+   *
+   * Look sensitivity is scaled by the same factor so a scoped weapon does not swing wildly
+   * for the same mouse movement.
+   */
+  updateZoom(dt) {
+    const cam = this.app.camera;
+    const base = this.baseFov ?? (this.baseFov = cam.fov);
+    const optic = this.weapon?.def?.picked?.sight;
+    const zoom = this.local.holdingGadget ? 1 : (optic?.zoom ?? 1);
+    const ads = this.app.player.ads;
+
+    // Blend toward the magnified FOV rather than snapping, so raising the optic reads as
+    // bringing it to your eye.
+    const targetFov = base / (1 + (zoom - 1) * ads);
+    const k = 1 - Math.exp(-18 * dt);
+    if (Math.abs(cam.fov - targetFov) > 0.01) {
+      cam.fov += (targetFov - cam.fov) * k;
+      cam.updateProjectionMatrix();
+      this.app.renderer.resetHistory();
+    }
+    // Effective magnification drives look speed, so tracking at 12x is not unusable.
+    this.app.input.zoomFactor = base / cam.fov;
+  }
+
   /** Adds trauma to the camera shake. Explosions call this scaled by distance. */
   addShake(amount) {
     this.app.player.shake = Math.min(1.2, (this.app.player.shake ?? 0) + amount);
@@ -679,9 +719,10 @@ export class Session {
 
     // Pick the loose charge up.
     const loose = m.looseBomb;
-    if (m.phase === PHASE.ACTION && loose && m.sideOf[p.team] === TEAM.ATTACK) {
+    if ((m.phase === PHASE.ACTION || m.phase === PHASE.PREP)
+        && loose && m.sideOf[p.team] === TEAM.ATTACK) {
       const d = Math.hypot(ctrl.position.x - loose.x, ctrl.position.z - loose.z);
-      if (d < 1.6 && Math.abs(ctrl.position.y - loose.y) < 2.2) {
+      if (d < 2.6 && Math.abs(ctrl.position.y - loose.y) < 2.5) {
         this.prompt = '[F] TAKE THE CHARGE';
         if (cmd.interact) m.pickUpBomb(p);
         return;
@@ -768,6 +809,9 @@ export class Session {
         // Show the loose charge so it can actually be found and collected.
         if (ev.position) this.gadgets.dropBomb(new THREE.Vector3(...ev.position));
         break;
+      case 'bomb:lost':
+        this.hud.showBanner('CHARGE CARRIER DOWN', ev.name ?? '', 2400);
+        break;
       case 'bomb:taken':
         this.gadgets.clearLooseBomb();
         this.hud.showBanner(ev.player === this.local.id ? 'YOU HAVE THE CHARGE'
@@ -790,7 +834,8 @@ export class Session {
       case 'round:end': {
         const won = ev.winningTeam === this.local.team;
         const why = { [WIN.ELIMINATION]: 'ENEMY TEAM ELIMINATED', [WIN.DETONATION]: 'CHARGE DETONATED',
-                      [WIN.DEFUSE]: 'CHARGE DEFUSED', [WIN.TIME]: 'TIME EXPIRED' }[ev.reason] ?? '';
+                      [WIN.DEFUSE]: 'CHARGE DEFUSED', [WIN.TIME]: 'TIME EXPIRED',
+                      [WIN.CARRIER_DOWN]: 'CHARGE CARRIER ELIMINATED' }[ev.reason] ?? '';
         this.hud.showBanner(won ? 'ROUND WON' : 'ROUND LOST', why, 4200);
         break;
       }

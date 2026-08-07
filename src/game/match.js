@@ -27,6 +27,7 @@ export const WIN = {
   DETONATION: 'detonation',
   DEFUSE: 'defuse',
   TIME: 'time',
+  CARRIER_DOWN: 'carrier',
 };
 
 export const RULES = {
@@ -96,6 +97,9 @@ export class Match {
     }
 
     for (const p of this.world.players.values()) this.resetPlayerForRound(p);
+    // The charge is on the ground from the moment preparation starts, so an attacker can
+    // collect it while they are still setting up rather than racing for it at the buzzer.
+    this.assignBomb();
     this.emit('round:start', { site: this.site?.id, phase: this.phase });
   }
 
@@ -141,9 +145,9 @@ export class Match {
     for (const p of attackers) p.hasBomb = false;
     this.emit('bomb:dropped', { position: [pt.x, pt.y, pt.z], atSpawn: true });
 
-    // Bots will not walk a pickup errand, so if no human takes it within the first few
-    // seconds of the action phase a bot claims it and the round can still progress.
-    this._botClaimIn = 8;
+    // Bots never take the charge during preparation — that time belongs to the human
+    // attackers. If it is still on the ground when the action phase begins, a random
+    // living attacker (bot or human) is given it, so the round always has a carrier.
   }
 
   /** Hands the charge to a player standing on it. */
@@ -157,6 +161,21 @@ export class Match {
     return true;
   }
 
+  /** Hands the charge to a random living attacker. Used if prep ends unclaimed. */
+  autoAssignBomb() {
+    const attackers = [...this.world.players.values()]
+      .filter((p) => this.sideOf[p.team] === TEAM.ATTACK && p.alive);
+    if (!attackers.length) return;
+    // A human standing near the charge when the buzzer goes clearly wanted it.
+    const d = this.bomb.dropped;
+    const near = d && attackers.find((p) => !p.bot
+      && Math.hypot(p.position.x - d.x, p.position.z - d.z) < 6);
+    const pick = near ?? attackers[Math.floor(Math.random() * attackers.length)];
+    this.bomb.dropped = this.bomb.dropped ?? { x: 0, y: 0, z: 0 };
+    this.bomb.carrier = null;
+    this.pickUpBomb(pick);
+  }
+
   /** Where the loose charge is, or null if someone is carrying it. */
   get looseBomb() { return this.bomb.planted ? null : this.bomb.dropped; }
 
@@ -165,16 +184,6 @@ export class Match {
   update(dt) {
     if (this.phase === PHASE.MATCH_OVER) return;
     this.phaseTime -= dt;
-
-    // Fallback so a bot-only attack still plays the objective out.
-    if (this._botClaimIn > 0 && this.bomb.dropped && !this.bomb.carrier) {
-      this._botClaimIn -= dt;
-      if (this._botClaimIn <= 0) {
-        const bot = [...this.world.players.values()]
-          .find((p) => p.bot && this.sideOf[p.team] === TEAM.ATTACK && p.alive);
-        if (bot) this.pickUpBomb(bot);
-      }
-    }
 
     if (this.phase === PHASE.PLANTED) this.updateDefuse(dt);
     else if (this.phase === PHASE.ACTION) this.updatePlant(dt);
@@ -190,7 +199,9 @@ export class Match {
       case PHASE.PREP:
         this.phase = PHASE.ACTION;
         this.phaseTime = this.rules.actionSeconds;
-        this.assignBomb();
+        // Nobody volunteered during prep — give it to a random living attacker so the
+        // round always has someone who can plant.
+        if (!this.bomb.carrier) this.autoAssignBomb();
         this.emit('phase:action');
         break;
       case PHASE.ACTION:
@@ -363,13 +374,14 @@ export class Match {
       target: target.id, targetName: target.name, attacker: attacker?.id,
       attackerName: attacker?.name, zone, headshot: zone === 'head',
     });
-    // Dropping the bomb has to leave it recoverable, not delete the objective.
-    if (target.hasBomb) {
+    // Losing the carrier loses the round. The charge is the objective, not a relay baton,
+    // so protecting whoever holds it is the attack's actual job.
+    if (target.hasBomb && !this.bomb.planted) {
       target.hasBomb = false;
-      this.emit('bomb:dropped', { position: target.controller?.position?.toArray() });
-      const mates = [...this.world.players.values()]
-        .filter((p) => this.sideOf[p.team] === TEAM.ATTACK && p.alive);
-      if (mates.length) mates[0].hasBomb = true;
+      this.bomb.carrier = null;
+      this.emit('bomb:lost', { player: target.id, name: target.name });
+      this.endRound(TEAM.DEFEND, WIN.CARRIER_DOWN);
+      return;
     }
     this.checkElimination();
   }

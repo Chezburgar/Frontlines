@@ -230,7 +230,10 @@ export class Input {
    */
   poll(adsBlend = 0) {
     const s = this.settings;
-    const sens = s.sensitivity * (1 - adsBlend * (1 - s.adsSensitivity));
+    // Divide by optical magnification as well as the ADS multiplier — at 9x the same
+    // mouse movement would otherwise sweep the view across the whole map.
+    const mag = Math.max(1, this.zoomFactor ?? 1);
+    const sens = s.sensitivity * (1 - adsBlend * (1 - s.adsSensitivity)) / mag;
     const lookX = this.lookDX * sens;
     const lookY = this.lookDY * sens * (s.invertY ? -1 : 1);
     this.lookDX = 0; this.lookDY = 0;
