@@ -215,6 +215,32 @@ class App {
     return this.session;
   }
 
+  /** Opens the training range: a live session with no match running. */
+  async enterRange(profile) {
+    this.session = new Session(this);
+    this.session.setup({
+      localName: profile?.username ?? 'OPERATOR', botCount: 0,
+      loadout: profile?.loadouts?.default, skins: profile?.skins ?? {}, banner: profile?.banner,
+    });
+    const { TrainingRange } = await import('./game/range.js');
+    this.session.match.phase = 'warmup';
+    this.session.range = new TrainingRange(this.session);
+    this.session.hud.setVisible('timer', false);
+    this.player.teleport(0, 0.4, 14, 0);
+    this.player.prepBarrier = null;
+    this.renderer.resetHistory();
+    return this.session;
+  }
+
+  leaveRange() {
+    this.session?.range?.dispose();
+    if (this.session) this.session.range = null;
+    this.input.releaseLock();
+    this.menuOrbit = true;
+    this.shell?.show();
+    this.shell?.renderMenu();
+  }
+
   update(dt) {
     // Slow orbit behind the menu.
     if (this.menuOrbit) {
@@ -416,6 +442,13 @@ async function boot() {
 
   const shell = new Shell(el.ui, app);
   app.shell = shell;
+  shell.onEnterRange = async (profile) => {
+    await audio.init();
+    audio.startAmbience();
+    app.menuOrbit = false;
+    await app.enterRange(profile);
+    prompt.style.display = '';
+  };
   shell.onStartMatch = async (opts) => {
     await audio.init();
     audio.startAmbience();

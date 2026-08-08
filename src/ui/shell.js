@@ -260,6 +260,10 @@ export class Shell {
       this.hide();
       this.onStartMatch?.({ offline: true, profile: this.profile });
     });
+    card('TRAINING RANGE', 'Every weapon, optic and attachment free. Targets at 5 to 40 m with live hit readout.', '', () => {
+      this.hide();
+      this.onEnterRange?.(this.profile);
+    });
     card('CUSTOMIZE', 'Banners, weapon skins and loadouts', '', () => this.renderCustomize());
     card('SETTINGS', 'Controls, video and audio', '', () => this.renderSettings());
     if (this.profile.role === 'admin' || this.profile.role === 'moderator') {

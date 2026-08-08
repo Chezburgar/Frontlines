@@ -20,6 +20,7 @@ import { applySkin } from '../ui/banner.js';
 import { GadgetSystem, GADGETS, SIDE, buildGadgetModel } from './gadgets.js';
 import { BuyMenu } from '../ui/buymenu.js';
 import { Drone } from './drone.js';
+import { TrainingRange } from './range.js';
 
 const DEFAULT_LOADOUT = {
   primary: { id: 'ar556', attach: { sight: 'holo', barrel: 'compensator', grip: 'vertical', under: 'none' } },
@@ -139,6 +140,25 @@ export class Session {
     p.ads = ctrl.ads;
 
     this.tick++;
+    if (this.range) {
+      // The range has no rounds, no objective and no barrier — just you and the targets.
+      this.range.update(dt);
+      const rw = this.weapon;
+      if (rw) rw.update(dt);
+      this.handleWeapon(dt, cmd, rw);
+      this.viewmodel.update(dt, {
+        ads: ctrl.ads, speed: ctrl.speed, grounded: ctrl.grounded,
+        lookDX: cmd.lookX, lookDY: cmd.lookY, sprinting: ctrl.sprinting, lean: ctrl.lean,
+        reloadProgress: rw && rw.reloading > 0 ? 1 - rw.reloading / Math.max(0.001, rw.reloadTotal) : 0,
+      });
+      audio.updateListener(this.app.camera);
+      this.updateFootsteps(dt);
+      this.updateZoom(dt);
+      this.particles.update(dt);
+      this.hitFeedback.t = Math.max(0, this.hitFeedback.t - dt);
+      this.updateHUD(cmd);
+      return;
+    }
     // Only the host advances the round state machine; clients take it from snapshots.
     if (!this.net || this.net.isHost) this.match.update(dt);
 
@@ -284,6 +304,35 @@ export class Session {
       this.viewmodel.addRecoil(rv0, rh0);
       this.flash(w);
       audio.gunshot({ weapon: w.def, firstPerson: true, suppressed: w.def.attach?.barrel === 'suppressor' });
+      return;
+    }
+
+    if (this.range) {
+      const pel = w.def.pellets ?? 1;
+      const cn = w.cone(ctrl.ads, ctrl.speed, ctrl.grounded);
+      for (let i = 0; i < pel; i++) {
+        const d = forward.clone();
+        if (cn > 0) {
+          const a = Math.random() * Math.PI * 2;
+          const r = Math.sqrt(Math.random()) * cn;
+          const rt = new THREE.Vector3().crossVectors(d, UP).normalize();
+          const up = new THREE.Vector3().crossVectors(rt, d).normalize();
+          d.addScaledVector(rt, Math.cos(a) * r).addScaledVector(up, Math.sin(a) * r).normalize();
+        }
+        if (!this.range.testShot(origin, d)) {
+          const h = this.map.raycast(origin, d, 120);
+          if (h) {
+            this.impacts.add(h.point, h.normal, h.surface);
+            if (i === 0) audio.impact({ position: h.point, surface: h.surfaceName });
+          }
+        }
+      }
+      const [rv2, rh2] = w.recoil();
+      this.app.player.addRecoil(rv2, rh2 * (Math.random() < 0.5 ? -1 : 1));
+      this.viewmodel.addRecoil(rv2, rh2);
+      this.flash(w);
+      audio.gunshot({ weapon: w.def, firstPerson: true,
+        suppressed: w.def.attach?.barrel === 'suppressor' });
       return;
     }
 

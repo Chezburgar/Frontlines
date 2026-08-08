@@ -376,7 +376,13 @@ export class Match {
     });
     // Losing the carrier loses the round. The charge is the objective, not a relay baton,
     // so protecting whoever holds it is the attack's actual job.
-    if (target.hasBomb && !this.bomb.planted) {
+    //
+    // Keyed on the recorded carrier, not on the player's own hasBomb flag: a stale flag on
+    // any other attacker would otherwise end the round the moment they died, while the
+    // real carrier was still alive and holding it.
+    const isCarrier = this.bomb.carrier != null && this.bomb.carrier === target.id;
+    const inPlay = this.phase === PHASE.ACTION || this.phase === PHASE.PLANTED;
+    if (isCarrier && inPlay && !this.bomb.planted) {
       target.hasBomb = false;
       this.bomb.carrier = null;
       this.emit('bomb:lost', { player: target.id, name: target.name });

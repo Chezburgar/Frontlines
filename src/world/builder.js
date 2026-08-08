@@ -368,14 +368,40 @@ export class MapBuilder {
     for (let i = 0; i < steps; i++) {
       const u = (i + 0.5) * stepRun;
       const cx = x1 + ux * u, cz = z1 + uz * u;
-      const h = yBase + (i + 1) * stepRise;
-      // Each tread is a solid block down to the previous step, so collision is a clean ramp.
-      const geo = new THREE.BoxGeometry(stepRun, stepRise, width);
-      this._scaleBoxUVs(geo, stepRun, stepRise, width, 1.0);
+      const top = yBase + (i + 1) * stepRise;
+
+      // Each tread is a solid block from the ground up to its own top face, not a floating
+      // slab of riser height. A stack of thin slabs leaves open air underneath: the capsule
+      // walks straight through the gaps and the ground probe never finds a surface to snap
+      // to, so the staircase was impassable and you could see under it.
+      const height = top - yBase;
+      const geo = new THREE.BoxGeometry(stepRun, height, width);
+      this._scaleBoxUVs(geo, stepRun, height, width, 1.0);
       geo.rotateY(-ang);
-      geo.translate(cx, h - stepRise / 2, cz);
+      geo.translate(cx, yBase + height / 2, cz);
       this._push(mat, geo);
     }
+    // A smooth collision ramp laid over the treads.
+    //
+    // Stepped geometry alone is miserable to walk: the capsule catches on every riser and
+    // the resolution has to decide, 120 times a second, whether a 18 cm face is a wall or
+    // a floor. A single inclined slab at 26 degrees is unambiguously walkable, so the
+    // player glides up while still *seeing* individual steps.
+    {
+      const slope = Math.atan2(rise, run);
+      const rampLen = Math.hypot(run, rise);
+      const geo = new THREE.BoxGeometry(rampLen, 0.24, width);
+      this._scaleBoxUVs(geo, rampLen, 0.24, width, 1.0);
+      geo.rotateZ(slope);
+      geo.rotateY(-ang);
+      // Sit the slab so its top face grazes the tread noses.
+      geo.translate(x1 + ux * run / 2, yBase + rise / 2 + 0.02, z1 + uz * run / 2);
+      const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ visible: false }));
+      mesh.name = 'stairRamp';
+      mesh.userData.surface = mat;
+      this.staticGroup.add(mesh);
+    }
+
     if (rail) {
       for (const side of [-1, 1]) {
         const ox = -uz * (width / 2) * side, oz = ux * (width / 2) * side;

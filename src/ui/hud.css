@@ -225,3 +225,33 @@
 .gfoot .count { font-family: var(--mono); font-size: 12px; color: var(--good); }
 .buy-panel footer { display: flex; align-items: center; gap: 16px; margin-top: 22px; }
 .buy-panel footer .dim { font-size: 12px; color: var(--text-mute); }
+
+
+/* --------------------------------------------------------------- training range */
+.range-ui {
+  position: absolute; left: 24px; top: 90px; width: 300px;
+  background: rgba(13,16,23,.92); border: 1px solid var(--line-2); padding: 16px 18px;
+}
+.range-head h2 { font-size: 14px; letter-spacing: .24em; color: var(--accent-2); }
+.range-head .hint, .range-row .hint {
+  display: block; font-size: 10px; line-height: 1.5; color: var(--text-mute); margin-top: 5px;
+}
+.range-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+.range-row .lbl { font-size: 10px; letter-spacing: .18em; color: var(--text-mute); width: 62px; }
+.range-row select {
+  flex: 1; min-width: 0; background: #0c0f16; border: 1px solid var(--line-2);
+  color: var(--text); padding: 5px 7px; font-family: var(--font); font-size: 12px;
+}
+.range-attach { margin-top: 4px; }
+.range-stats {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 4px 10px; margin-top: 14px;
+  padding-top: 12px; border-top: 1px solid var(--line);
+}
+.range-stats .st { font-family: var(--mono); font-size: 11px; color: var(--text-dim); }
+.range-hit {
+  position: absolute; left: 50%; top: 44%; transform: translate(-50%, 6px);
+  font-size: 17px; letter-spacing: .16em; color: #eef3f8;
+  text-shadow: 0 2px 8px #000; opacity: 0; transition: .18s; pointer-events: none;
+}
+.range-hit.show { opacity: 1; transform: translate(-50%, 0); }
+.range-hit.head { color: var(--accent-2); }
